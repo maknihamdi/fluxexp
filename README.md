@@ -28,6 +28,11 @@ fluxexp list --kind Kustomization              # all namespaces
 fluxexp list --kind HelmRelease --unhealthy    # only the ones with problems
 fluxexp list --kind GitRepository -n team-a    # a single namespace
 
+# Open the local exploration portal (web UI) — pick a context, list root
+# Kustomizations, drill layer by layer. No auth; loopback only.
+fluxexp ui                       # http://127.0.0.1:8765
+fluxexp ui --address 127.0.0.1:9000
+
 # Traverse from a Flux Kustomization (apiVersion/kind default to Kustomization)
 fluxexp traverse -n flux-system --name apps
 
@@ -47,9 +52,12 @@ and domain. Error nodes are marked inline with their reason.
   (`.status.inventory`) + generic Kubernetes fallback. CLI tree output.
 - **I2 (done)**: HelmRelease resolver — expands a HelmRelease into the objects
   its chart deployed, via the Helm release storage Secret.
-- I3: operator-CRD leaf resolver + Ready aggregation.
-- I4: cloud verification (e.g. GCP via a `gcp`-domain resolver).
-- I5: web UI (backend + embedded frontend) over the same resolved tree.
+- **I3 (in progress)**: web UI initiated — a local, no-auth portal (`fluxexp
+  ui`) that lists kube contexts, shows root Kustomizations, and drills the
+  resource graph layer by layer, reusing the same resolvers.
+- Next: workload-health resolvers (remove `unknown` for Deployments/Services);
+  operator-CRD descent; cloud verification (e.g. GCP via a `gcp`-domain
+  resolver, using `gcloud`).
 
 ## Development
 
