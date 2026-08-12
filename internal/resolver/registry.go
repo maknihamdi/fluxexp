@@ -20,6 +20,19 @@ func NewRegistry() *Registry {
 	return &Registry{fallbacks: map[string]Resolver{}}
 }
 
+// NewDefaultRegistry returns the standard resolver set shared by the CLI and the
+// web UI: specific resolvers (Kustomization, HelmRelease, workloads) ahead of
+// the generic Kubernetes fallback. Add new resolvers here so both surfaces
+// resolve identically.
+func NewDefaultRegistry() *Registry {
+	reg := NewRegistry()
+	reg.Register(KustomizationResolver{})
+	reg.Register(HelmReleaseResolver{})
+	reg.Register(WorkloadResolver{})
+	reg.RegisterFallback(DomainK8s, GenericK8sResolver{})
+	return reg
+}
+
 // Register adds a specific resolver. Order matters: earlier registrations take
 // precedence when multiple matchers claim the same reference.
 func (r *Registry) Register(res Resolver) {
