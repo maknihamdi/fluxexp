@@ -43,9 +43,10 @@ and domain. Error nodes are marked inline with their reason.
 
 ## Increment roadmap
 
-- **I1 (current)**: traversal engine + Flux Kustomization resolver
+- **I1 (done)**: traversal engine + Flux Kustomization resolver
   (`.status.inventory`) + generic Kubernetes fallback. CLI tree output.
-- I2: HelmRelease resolver (Helm release storage).
+- **I2 (done)**: HelmRelease resolver — expands a HelmRelease into the objects
+  its chart deployed, via the Helm release storage Secret.
 - I3: operator-CRD leaf resolver + Ready aggregation.
 - I4: cloud verification (e.g. GCP via a `gcp`-domain resolver).
 - I5: web UI (backend + embedded frontend) over the same resolved tree.

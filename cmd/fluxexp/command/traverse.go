@@ -40,6 +40,7 @@ func newTraverseCmd() *cobra.Command {
 
 			reg := resolver.NewRegistry()
 			reg.Register(resolver.KustomizationResolver{})
+			reg.Register(resolver.HelmReleaseResolver{})
 			reg.RegisterFallback(resolver.DomainK8s, resolver.GenericK8sResolver{})
 
 			rc := &resolver.ResolveContext{K8s: client}
