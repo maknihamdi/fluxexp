@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/maknihamdi/fluxexp/internal/engine"
 
@@ -52,7 +53,82 @@ func (WorkloadResolver) Resolve(ctx context.Context, rc *ResolveContext, ref eng
 	default:
 		health = engine.Unknown
 	}
-	return engine.Result{Health: health, Detail: detail}, nil
+
+	children, extra, err := workloadChildren(ctx, rc, obj, ref, kind)
+	if err != nil {
+		return engine.Result{}, err
+	}
+	if extra != "" {
+		detail = strings.TrimSpace(detail + " · " + extra)
+	}
+	return engine.Result{Health: health, Detail: detail, Children: children}, nil
+}
+
+// workloadChildren descends a workload to the objects it owns. It returns the
+// child references and an optional extra detail (e.g. omitted old revisions).
+func workloadChildren(ctx context.Context, rc *ResolveContext, obj *unstructured.Unstructured, ref engine.Ref, kind string) ([]engine.Ref, string, error) {
+	ns := ref.Coords["namespace"]
+	uid := string(obj.GetUID())
+
+	switch kind {
+	case "Deployment":
+		// Owned ReplicaSets, keeping only active revisions (replicas > 0).
+		var omitted int
+		children, err := ownedChildren(ctx, rc, uid, ns, "apps/v1", "ReplicaSet", func(rs *unstructured.Unstructured) bool {
+			if n, _ := nestedInt(rs, "status", "replicas"); n > 0 {
+				return true
+			}
+			omitted++
+			return false
+		})
+		extra := ""
+		if omitted > 0 {
+			extra = fmt.Sprintf("%d old revisions", omitted)
+		}
+		return children, extra, err
+	case "ReplicaSet", "StatefulSet", "DaemonSet", "Job":
+		children, err := ownedChildren(ctx, rc, uid, ns, "v1", "Pod", nil)
+		return children, "", err
+	default: // Pod: leaf
+		return nil, "", nil
+	}
+}
+
+// ownedChildren lists childKind in namespace ns and returns references to those
+// owned by parentUID (via ownerReferences), optionally filtered by keep.
+func ownedChildren(ctx context.Context, rc *ResolveContext, parentUID, ns, childAPIVersion, childKind string, keep func(*unstructured.Unstructured) bool) ([]engine.Ref, error) {
+	if rc == nil || rc.K8s == nil {
+		return nil, fmt.Errorf("no kubernetes client configured")
+	}
+	objs, err := rc.K8s.List(ctx, childAPIVersion, childKind, ns)
+	if err != nil {
+		return nil, fmt.Errorf("listing %s in %s: %w", childKind, ns, err)
+	}
+	var refs []engine.Ref
+	for i := range objs {
+		child := &objs[i]
+		if !ownedBy(child, parentUID) {
+			continue
+		}
+		if keep != nil && !keep(child) {
+			continue
+		}
+		refs = append(refs, K8sRef(childAPIVersion, childKind, child.GetNamespace(), child.GetName()))
+	}
+	return refs, nil
+}
+
+// ownedBy reports whether obj has an ownerReference with the given UID.
+func ownedBy(obj *unstructured.Unstructured, parentUID string) bool {
+	if parentUID == "" {
+		return false
+	}
+	for _, o := range obj.GetOwnerReferences() {
+		if string(o.UID) == parentUID {
+			return true
+		}
+	}
+	return false
 }
 
 // groupOf returns the API group of an apiVersion ("" for the core group).
