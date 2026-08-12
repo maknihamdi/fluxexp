@@ -38,10 +38,7 @@ func newTraverseCmd() *cobra.Command {
 				return fmt.Errorf("connecting to cluster: %w", err)
 			}
 
-			reg := resolver.NewRegistry()
-			reg.Register(resolver.KustomizationResolver{})
-			reg.Register(resolver.HelmReleaseResolver{})
-			reg.RegisterFallback(resolver.DomainK8s, resolver.GenericK8sResolver{})
+			reg := resolver.NewDefaultRegistry()
 
 			rc := &resolver.ResolveContext{K8s: client}
 			root := resolver.K8sRef(apiVersion, kind, namespace, name)

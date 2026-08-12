@@ -40,14 +40,10 @@ func NewService() *Service {
 
 // newService is the injectable constructor used by tests.
 func newService(newClient func(contextName string) (cluster, error)) *Service {
-	reg := resolver.NewRegistry()
-	reg.Register(resolver.KustomizationResolver{})
-	reg.Register(resolver.HelmReleaseResolver{})
-	reg.RegisterFallback(resolver.DomainK8s, resolver.GenericK8sResolver{})
 	return &Service{
 		clients:   map[string]cluster{},
 		newClient: newClient,
-		registry:  reg,
+		registry:  resolver.NewDefaultRegistry(),
 	}
 }
 

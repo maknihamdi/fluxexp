@@ -52,12 +52,15 @@ and domain. Error nodes are marked inline with their reason.
   (`.status.inventory`) + generic Kubernetes fallback. CLI tree output.
 - **I2 (done)**: HelmRelease resolver — expands a HelmRelease into the objects
   its chart deployed, via the Helm release storage Secret.
-- **I3 (in progress)**: web UI initiated — a local, no-auth portal (`fluxexp
-  ui`) that lists kube contexts, shows root Kustomizations, and drills the
-  resource graph layer by layer, reusing the same resolvers.
-- Next: workload-health resolvers (remove `unknown` for Deployments/Services);
-  operator-CRD descent; cloud verification (e.g. GCP via a `gcp`-domain
-  resolver, using `gcloud`).
+- **I3 (done)**: web UI initiated — a local, no-auth portal (`fluxexp ui`) that
+  lists kube contexts, shows root Kustomizations, and drills the resource graph
+  layer by layer, reusing the same resolvers.
+- **I4 (done)**: workload-health resolver — real health for Deployment,
+  StatefulSet, DaemonSet, ReplicaSet, Pod and Job (replica counts / phase /
+  conditions), removing the `unknown` noise in both CLI and UI.
+- Next: descend workloads (Deployment → ReplicaSet → Pods); operator-CRD
+  descent; cloud verification (e.g. GCP via a `gcp`-domain resolver, using
+  `gcloud`).
 
 ## Development
 
