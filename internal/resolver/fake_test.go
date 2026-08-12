@@ -9,9 +9,12 @@ import (
 
 // fakeGetter is a K8sGetter backed by an in-memory object map keyed by
 // "kind|namespace|name". An empty map with err set simulates fetch failures.
+// clusterScoped names kinds that should report as cluster-scoped; anything else
+// is treated as namespaced.
 type fakeGetter struct {
-	objs map[string]*unstructured.Unstructured
-	err  error
+	objs          map[string]*unstructured.Unstructured
+	err           error
+	clusterScoped map[string]bool
 }
 
 func (f fakeGetter) Get(_ context.Context, _ /*apiVersion*/, kind, namespace, name string) (*unstructured.Unstructured, error) {
@@ -24,6 +27,10 @@ func (f fakeGetter) Get(_ context.Context, _ /*apiVersion*/, kind, namespace, na
 		return nil, fmt.Errorf("not found: %s", key)
 	}
 	return obj, nil
+}
+
+func (f fakeGetter) Namespaced(_ /*apiVersion*/, kind string) (bool, error) {
+	return !f.clusterScoped[kind], nil
 }
 
 // objWithReady builds an object carrying a Ready condition.

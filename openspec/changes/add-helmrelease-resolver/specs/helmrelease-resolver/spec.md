@@ -52,19 +52,26 @@ surface as a resolve error for that node.
 
 The resolver MUST parse the release `manifest` as a multi-document YAML stream
 and emit one `kubernetes` child reference per rendered object, carrying the
-object's type (apiVersion/kind) and coordinates (namespace, name). An object
-with no explicit namespace MUST inherit the release namespace. Empty documents
-MUST be skipped.
+object's type (apiVersion/kind) and coordinates (namespace, name). Namespace
+defaulting MUST be scope-aware: a **namespaced** object with no explicit
+namespace MUST inherit the release namespace, while a **cluster-scoped** object
+MUST keep an empty namespace. When the scope cannot be determined, the object
+MUST be treated as namespaced. Empty documents MUST be skipped.
 
 #### Scenario: Rendered objects become child references
 
 - **WHEN** the release manifest renders a Deployment and a Service in namespace `apps`
 - **THEN** the resolver returns two `kubernetes` child references identifying that Deployment and Service in `apps`
 
-#### Scenario: Namespaceless object inherits the release namespace
+#### Scenario: Namespaced object inherits the release namespace
 
-- **WHEN** a rendered object declares no namespace and the release namespace is `apps`
+- **WHEN** a namespaced rendered object declares no namespace and the release namespace is `apps`
 - **THEN** the corresponding child reference has namespace `apps`
+
+#### Scenario: Cluster-scoped object stays namespace-less
+
+- **WHEN** a cluster-scoped rendered object (e.g. a ClusterRole or CustomResourceDefinition) declares no namespace
+- **THEN** the corresponding child reference has an empty namespace and does not inherit the release namespace
 
 ### Requirement: HelmRelease health
 
