@@ -13,5 +13,6 @@ func NewRootCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newTraverseCmd())
+	cmd.AddCommand(newUICmd())
 	return cmd
 }
