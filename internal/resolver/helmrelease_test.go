@@ -44,6 +44,16 @@ func TestDecodeHelmRelease_Corrupt(t *testing.T) {
 	}
 }
 
+// allNamespaced treats every kind as namespaced.
+func allNamespaced(_ /*apiVersion*/, _ /*kind*/ string) (bool, error) { return true, nil }
+
+// scopeBy reports cluster scope for the kinds in the set (namespaced otherwise).
+func scopeBy(clusterScoped map[string]bool) func(string, string) (bool, error) {
+	return func(_ /*apiVersion*/, kind string) (bool, error) {
+		return !clusterScoped[kind], nil
+	}
+}
+
 func TestManifestChildren(t *testing.T) {
 	manifest := `apiVersion: apps/v1
 kind: Deployment
@@ -59,7 +69,7 @@ metadata:
 # an empty doc below
 ---
 `
-	refs, err := manifestChildren(manifest, "apps")
+	refs, err := manifestChildren(manifest, "apps", allNamespaced)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -73,6 +83,34 @@ metadata:
 	// Service has no namespace in the manifest -> inherits the release namespace.
 	if refs[1].Type != "v1|Service" || refs[1].Coords["namespace"] != "apps" {
 		t.Fatalf("service should inherit release ns: %+v", refs[1])
+	}
+}
+
+func TestManifestChildren_ClusterScopedStaysNamespaceless(t *testing.T) {
+	manifest := `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: viewer
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cfg
+`
+	refs, err := manifestChildren(manifest, "apps", scopeBy(map[string]bool{"ClusterRole": true}))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("want 2 children, got %d", len(refs))
+	}
+	// Cluster-scoped ClusterRole must NOT inherit the release namespace.
+	if refs[0].Coords["namespace"] != "" {
+		t.Fatalf("ClusterRole should stay namespace-less, got %q", refs[0].Coords["namespace"])
+	}
+	// Namespaced ConfigMap without a namespace inherits the release namespace.
+	if refs[1].Coords["namespace"] != "apps" {
+		t.Fatalf("ConfigMap should inherit release ns, got %q", refs[1].Coords["namespace"])
 	}
 }
 

@@ -95,6 +95,21 @@ func (c *Client) Get(ctx context.Context, apiVersion, kind, namespace, name stri
 	return obj, nil
 }
 
+// Namespaced reports whether the given apiVersion/kind is a namespaced resource,
+// resolved via the discovery-backed RESTMapper.
+func (c *Client) Namespaced(apiVersion, kind string) (bool, error) {
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return false, fmt.Errorf("parsing apiVersion %q: %w", apiVersion, err)
+	}
+	gvk := gv.WithKind(kind)
+	mapping, err := c.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return false, fmt.Errorf("mapping %s: %w", gvk.String(), err)
+	}
+	return mapping.Scope.Name() == meta.RESTScopeNameNamespace, nil
+}
+
 // List returns all objects of the given apiVersion/kind. An empty namespace
 // lists across all namespaces (for namespaced kinds) or cluster-wide.
 func (c *Client) List(ctx context.Context, apiVersion, kind, namespace string) ([]unstructured.Unstructured, error) {

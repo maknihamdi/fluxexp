@@ -66,7 +66,7 @@ func (HelmReleaseResolver) Resolve(ctx context.Context, rc *ResolveContext, ref 
 		return engine.Result{}, fmt.Errorf("decoding helm release %s: %w", name, err)
 	}
 
-	children, err := manifestChildren(rel.Manifest, rel.Namespace)
+	children, err := manifestChildren(rel.Manifest, rel.Namespace, rc.K8s.Namespaced)
 	if err != nil {
 		return engine.Result{}, fmt.Errorf("parsing helm manifest for %s: %w", name, err)
 	}
@@ -155,9 +155,11 @@ func decodeHelmRelease(k8sBase64 string) (*helmRelease, error) {
 }
 
 // manifestChildren parses the release manifest (a multi-document YAML stream)
-// into child references. Objects without a namespace inherit releaseNamespace;
-// empty documents are skipped.
-func manifestChildren(manifest, releaseNamespace string) ([]engine.Ref, error) {
+// into child references. A namespaced object with no explicit namespace inherits
+// releaseNamespace; a cluster-scoped object keeps an empty namespace. Scope is
+// resolved via namespaced(); when it cannot be determined, the object is treated
+// as namespaced (defaults to releaseNamespace). Empty documents are skipped.
+func manifestChildren(manifest, releaseNamespace string, namespaced func(apiVersion, kind string) (bool, error)) ([]engine.Ref, error) {
 	dec := k8syaml.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096)
 	var refs []engine.Ref
 	for {
@@ -181,7 +183,11 @@ func manifestChildren(manifest, releaseNamespace string) ([]engine.Ref, error) {
 		name, _ := meta["name"].(string)
 		namespace, _ := meta["namespace"].(string)
 		if namespace == "" {
-			namespace = releaseNamespace
+			// Only namespaced kinds inherit the release namespace; cluster-scoped
+			// kinds stay namespace-less. If scope is unknown, assume namespaced.
+			if isNs, err := namespaced(apiVersion, kind); err != nil || isNs {
+				namespace = releaseNamespace
+			}
 		}
 		refs = append(refs, K8sRef(apiVersion, kind, namespace, name))
 	}

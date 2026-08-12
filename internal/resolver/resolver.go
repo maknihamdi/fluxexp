@@ -17,10 +17,12 @@ import (
 // DomainK8s is the domain name for Kubernetes-hosted objects.
 const DomainK8s = "kubernetes"
 
-// K8sGetter fetches a Kubernetes object by apiVersion/kind and namespace/name.
+// K8sGetter fetches Kubernetes objects and answers resource-scope questions.
 // *k8s.Client satisfies it; tests provide a fake.
 type K8sGetter interface {
 	Get(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error)
+	// Namespaced reports whether the apiVersion/kind is a namespaced resource.
+	Namespaced(apiVersion, kind string) (bool, error)
 }
 
 // ResolveContext carries the shared, lazily-built clients per domain. In this
