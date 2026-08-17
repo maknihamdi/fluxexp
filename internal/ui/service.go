@@ -80,10 +80,36 @@ func (s *Service) Roots(contextName, namespace string) ([]RootDTO, error) {
 		return nil, err
 	}
 	roots := make([]RootDTO, 0, len(objs))
+	srcCache := map[string]*unstructured.Unstructured{}
 	for i := range objs {
-		roots = append(roots, rootSummary(&objs[i]))
+		ks := &objs[i]
+		roots = append(roots, rootSummary(ks, s.sourceFor(c, ks, srcCache)))
 	}
 	return roots, nil
+}
+
+// sourceFor fetches a Kustomization's source object, caching by identity so a
+// shared source (e.g. the "flux" GitRepository) is fetched once per listing.
+func (s *Service) sourceFor(c cluster, ks *unstructured.Unstructured, cache map[string]*unstructured.Unstructured) *unstructured.Unstructured {
+	kind, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "kind")
+	name, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "name")
+	if kind == "" || name == "" {
+		return nil
+	}
+	ns, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "namespace")
+	if ns == "" {
+		ns = ks.GetNamespace()
+	}
+	key := kind + "|" + ns + "|" + name
+	if src, ok := cache[key]; ok {
+		return src
+	}
+	src, err := c.Get(context.Background(), "source.toolkit.fluxcd.io/v1", kind, ns, name)
+	if err != nil {
+		src = nil
+	}
+	cache[key] = src
+	return src
 }
 
 // Expand resolves one node fully (its health/detail and its child refs) and
@@ -110,7 +136,9 @@ func (s *Service) Expand(contextName string, ref engine.Ref) (NodeDTO, error) {
 		return node, nil
 	}
 	node.Health = string(res.Health)
+	node.Freshness = string(res.Freshness)
 	node.Detail = res.Detail
+	node.Fields = fieldsToDTO(res.Fields)
 	for _, child := range res.Children {
 		node.Children = append(node.Children, s.childHealth(rc, child, contextName))
 	}
@@ -133,14 +161,21 @@ func (s *Service) childHealth(rc *resolver.ResolveContext, ref engine.Ref, conte
 	return child
 }
 
-// rootSummary extracts the home-page summary from a Kustomization object.
-func rootSummary(obj *unstructured.Unstructured) RootDTO {
+// rootSummary extracts the home-page summary from a Kustomization object and its
+// source (may be nil), including reconciliation freshness.
+func rootSummary(obj, source *unstructured.Unstructured) RootDTO {
 	ns := obj.GetNamespace()
 	name := obj.GetName()
 	ref := resolver.K8sRef("kustomize.toolkit.fluxcd.io/v1", "Kustomization", ns, name)
 
 	h, _ := resolver.K8sHealth(obj)
-	dto := RootDTO{Ref: refToDTO(ref), Health: string(h)}
+	freshness, fields := resolver.KustomizationFreshness(obj, source)
+	dto := RootDTO{
+		Ref:       refToDTO(ref),
+		Health:    string(h),
+		Freshness: string(freshness),
+		Fields:    fieldsToDTO(fields),
+	}
 
 	dto.SourceKind, _, _ = unstructured.NestedString(obj.Object, "spec", "sourceRef", "kind")
 	dto.SourceName, _, _ = unstructured.NestedString(obj.Object, "spec", "sourceRef", "name")

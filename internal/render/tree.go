@@ -45,18 +45,34 @@ func renderChildren(b *strings.Builder, node *engine.Node, prefix string) {
 func line(n *engine.Node) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s [%s]", glyph(n.Health), n.Ref.Label(), n.Health)
+	if n.Freshness != "" {
+		b.WriteString(" [" + string(n.Freshness) + "]")
+	}
 	b.WriteString(" (" + n.Ref.Domain + ")")
 
+	detail := n.Detail
+	if len(n.Fields) > 0 {
+		detail = fieldsSummary(n.Fields)
+	}
 	switch {
 	case n.Health == engine.Error && n.Err != "":
 		b.WriteString(" — " + n.Err)
-	case n.Detail != "":
-		b.WriteString(" — " + n.Detail)
+	case detail != "":
+		b.WriteString(" — " + detail)
 	}
 	if n.Visited {
 		b.WriteString(" (already visited)")
 	}
 	return b.String()
+}
+
+// fieldsSummary renders fields compactly as "label value · label value".
+func fieldsSummary(fields []engine.Field) string {
+	parts := make([]string, 0, len(fields))
+	for _, f := range fields {
+		parts = append(parts, strings.ToLower(f.Label)+" "+f.Value)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // glyph returns a status marker for a health value.

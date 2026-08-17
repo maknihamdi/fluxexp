@@ -31,6 +31,36 @@ function badge(health) {
   return b;
 }
 
+// freshnessBadge returns a badge for a freshness value, or null when empty.
+function freshnessBadge(freshness) {
+  if (!freshness) return null;
+  const b = document.createElement("span");
+  b.className = `badge fresh ${freshness}`;
+  b.innerHTML = `<span class="dot"></span>${freshness}`;
+  return b;
+}
+
+// fieldsPanel renders label/value fields; the full value (if any) is the title.
+function fieldsPanel(fields) {
+  const wrap = document.createElement("div");
+  wrap.className = "fields";
+  for (const f of fields || []) {
+    const row = document.createElement("div");
+    row.className = "field";
+    const l = document.createElement("span");
+    l.className = "flabel";
+    l.textContent = f.label;
+    const v = document.createElement("span");
+    v.className = "fvalue";
+    v.textContent = f.value;
+    if (f.full) v.title = f.full;
+    row.appendChild(l);
+    row.appendChild(v);
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
 function expandQuery(ref) {
   const p = new URLSearchParams({
     context: state.context,
@@ -156,11 +186,15 @@ async function renderHome() {
     const head = document.createElement("div");
     head.className = "card-head";
     head.appendChild(badge(r.health));
+    const fb = freshnessBadge(r.freshness);
+    if (fb) head.appendChild(fb);
     const t = document.createElement("span");
     t.className = "title";
     t.textContent = `${r.ref.namespace}/${r.ref.name}`;
     head.appendChild(t);
     card.appendChild(head);
+
+    if (r.fields && r.fields.length) card.appendChild(fieldsPanel(r.fields));
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -168,8 +202,6 @@ async function renderHome() {
     if (r.sourceKind) bits.push(`<span>source <b>${r.sourceKind}/${r.sourceName}</b></span>`);
     if (r.path) bits.push(`<span>path <b>${r.path}</b></span>`);
     if (r.interval) bits.push(`<span>interval <b>${r.interval}</b></span>`);
-    if (r.revision) bits.push(`<span>revision <b>${r.revision}</b></span>`);
-    if (r.lastTransition) bits.push(`<span>synced <b>${r.lastTransition}</b></span>`);
     meta.innerHTML = bits.join("");
     card.appendChild(meta);
 
@@ -215,12 +247,15 @@ async function renderExplore() {
   const hh = document.createElement("div");
   hh.className = "card-head";
   hh.appendChild(badge(node.health));
+  const nfb = freshnessBadge(node.freshness);
+  if (nfb) hh.appendChild(nfb);
   const t = document.createElement("span");
   t.className = "title";
   t.textContent = node.ref.display || `${node.ref.type} ${node.ref.name}`;
   hh.appendChild(t);
   head.appendChild(hh);
-  if (node.error || node.detail) {
+  if (node.fields && node.fields.length) head.appendChild(fieldsPanel(node.fields));
+  if (node.error || (node.detail && !(node.fields && node.fields.length))) {
     const d = document.createElement("div");
     d.className = "msg";
     d.textContent = node.error || node.detail;
