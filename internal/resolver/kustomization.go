@@ -46,7 +46,40 @@ func (KustomizationResolver) Resolve(ctx context.Context, rc *ResolveContext, re
 	}
 
 	health, detail := healthFromReady(obj)
-	return engine.Result{Health: health, Detail: detail, Children: children}, nil
+
+	// Compute reconciliation freshness by comparing the applied revision to the
+	// source's fetched revision (cluster-only). A failed source fetch degrades
+	// gracefully inside KustomizationFreshness.
+	_, _, ns, _, _ := DecodeK8sRef(ref)
+	source := fetchKustomizationSource(ctx, rc, obj, ns)
+	freshness, fields := KustomizationFreshness(obj, source)
+
+	return engine.Result{
+		Health:    health,
+		Detail:    detail,
+		Freshness: freshness,
+		Fields:    fields,
+		Children:  children,
+	}, nil
+}
+
+// fetchKustomizationSource fetches the Kustomization's source object
+// (spec.sourceRef). Returns nil when it is unspecified or cannot be fetched.
+func fetchKustomizationSource(ctx context.Context, rc *ResolveContext, ks *unstructured.Unstructured, ns string) *unstructured.Unstructured {
+	kind, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "kind")
+	name, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "name")
+	if kind == "" || name == "" {
+		return nil
+	}
+	srcNS, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "namespace")
+	if srcNS == "" {
+		srcNS = ns
+	}
+	src, err := rc.GetK8s(ctx, K8sRef("source.toolkit.fluxcd.io/v1", kind, srcNS, name))
+	if err != nil {
+		return nil
+	}
+	return src
 }
 
 // inventoryChildren decodes .status.inventory.entries into child references.

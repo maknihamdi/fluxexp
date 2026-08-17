@@ -119,6 +119,24 @@ func TestTraverse_PartialFailureContinues(t *testing.T) {
 	}
 }
 
+func TestTraverse_CarriesFreshnessAndFields(t *testing.T) {
+	root := ref("Kustomization", "apps")
+	resolve := func(r Ref) (Result, error) {
+		return Result{
+			Health:    Healthy,
+			Freshness: Behind,
+			Fields:    []Field{{Label: "Applied", Value: "main@abc"}, {Label: "Source", Value: "main@def"}},
+		}, nil
+	}
+	got := Traverse(root, resolve)
+	if got.Freshness != Behind {
+		t.Fatalf("freshness = %q, want behind", got.Freshness)
+	}
+	if len(got.Fields) != 2 || got.Fields[0].Label != "Applied" || got.Fields[1].Label != "Source" {
+		t.Fatalf("fields not carried in order: %+v", got.Fields)
+	}
+}
+
 func TestTraverse_EveryNodeHasHealth(t *testing.T) {
 	root := ref("Root", "r")
 	c1 := ref("Child", "a")

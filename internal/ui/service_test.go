@@ -60,6 +60,15 @@ func kustomization(ns, name string) *unstructured.Unstructured {
 	}}
 }
 
+func gitRepo(ns, name, revision string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"namespace": ns, "name": name},
+		"status": map[string]interface{}{"artifact": map[string]interface{}{
+			"revision": revision, "lastUpdateTime": "2026-08-13T09:00:00Z",
+		}},
+	}}
+}
+
 func newFakeService() (*Service, *fakeCluster) {
 	deploy := &unstructured.Unstructured{Object: map[string]interface{}{
 		"metadata": map[string]interface{}{"namespace": "flux", "name": "web"},
@@ -68,6 +77,8 @@ func newFakeService() (*Service, *fakeCluster) {
 		objs: map[string]*unstructured.Unstructured{
 			"Kustomization|flux|apps": kustomization("flux", "apps"),
 			"Deployment|flux|web":     deploy,
+			// Source matches the applied revision -> up-to-date.
+			"GitRepository|flux|flux": gitRepo("flux", "flux", "main@sha1:abc"),
 		},
 		lists: map[string][]unstructured.Unstructured{
 			"Kustomization|flux": {*kustomization("flux", "apps")},
@@ -96,6 +107,12 @@ func TestRoots_ExtractsSummary(t *testing.T) {
 	if r.LastTransition == "" || r.Message == "" {
 		t.Fatalf("expected transition time and message: %+v", r)
 	}
+	if r.Freshness != "up-to-date" {
+		t.Fatalf("freshness = %q, want up-to-date", r.Freshness)
+	}
+	if len(r.Fields) == 0 {
+		t.Fatalf("expected freshness fields on the root summary")
+	}
 }
 
 func TestExpand_ReturnsChildrenWithHealth(t *testing.T) {
@@ -111,6 +128,9 @@ func TestExpand_ReturnsChildrenWithHealth(t *testing.T) {
 	}
 	if node.Health != string(engine.Healthy) {
 		t.Fatalf("node health = %q", node.Health)
+	}
+	if node.Freshness != "up-to-date" || len(node.Fields) == 0 {
+		t.Fatalf("expand should carry freshness + fields, got freshness=%q fields=%d", node.Freshness, len(node.Fields))
 	}
 	if len(node.Children) != 1 {
 		t.Fatalf("want 1 child, got %d", len(node.Children))

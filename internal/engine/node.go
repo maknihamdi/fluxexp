@@ -4,8 +4,13 @@ package engine
 // an optional human-readable detail, and the child references to traverse next.
 // Children MAY belong to a different domain than the resolved reference.
 type Result struct {
-	Health   Health
-	Detail   string
+	Health Health
+	Detail string
+	// Freshness is an optional second status (reconciliation freshness); empty
+	// when a resolver does not set it.
+	Freshness Freshness
+	// Fields are optional ordered label/value extras surfaced by the resolver.
+	Fields   []Field
 	Children []Ref
 }
 
@@ -18,6 +23,10 @@ type Node struct {
 	Detail string
 	// Err holds the failure reason for an Error node; empty otherwise.
 	Err string
+	// Freshness is the optional second status carried from the resolver.
+	Freshness Freshness
+	// Fields are the optional ordered label/value extras from the resolver.
+	Fields []Field
 	// Visited is true when this reference was already expanded elsewhere in the
 	// graph; such a node is a leaf pointer and is not re-expanded.
 	Visited  bool

@@ -62,5 +62,11 @@ func resolveNode(ref Ref, resolve ResolveFunc) (*Node, []Ref) {
 	if err != nil {
 		return &Node{Ref: ref, Health: Error, Err: err.Error()}, nil
 	}
-	return &Node{Ref: ref, Health: res.Health, Detail: res.Detail}, res.Children
+	return &Node{
+		Ref:       ref,
+		Health:    res.Health,
+		Detail:    res.Detail,
+		Freshness: res.Freshness,
+		Fields:    res.Fields,
+	}, res.Children
 }

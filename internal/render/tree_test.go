@@ -77,3 +77,32 @@ func TestTree_NilRootIsEmpty(t *testing.T) {
 		t.Fatal("nil root should render empty")
 	}
 }
+
+func TestTree_ShowsFreshnessAndFields(t *testing.T) {
+	root := &engine.Node{
+		Ref:       k8sRef("Kustomization", "flux", "alloy"),
+		Health:    engine.Healthy,
+		Freshness: engine.UpToDate,
+		Fields: []engine.Field{
+			{Label: "Applied", Value: "alloy@f799f03"},
+			{Label: "Synced", Value: "3m ago"},
+		},
+	}
+	out := Tree(root)
+	for _, want := range []string{"[healthy]", "[up-to-date]", "applied alloy@f799f03", "synced 3m ago"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestTree_NonFreshnessNodeUnchanged(t *testing.T) {
+	root := &engine.Node{Ref: k8sRef("Deployment", "ns", "web"), Health: engine.Healthy, Detail: "1/1 ready"}
+	out := Tree(root)
+	if strings.Contains(out, "[up-to-date]") || strings.Contains(out, "[behind]") {
+		t.Fatalf("a non-freshness node must not show freshness:\n%s", out)
+	}
+	if !strings.Contains(out, "1/1 ready") {
+		t.Fatalf("detail lost:\n%s", out)
+	}
+}

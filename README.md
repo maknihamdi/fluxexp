@@ -61,6 +61,11 @@ and domain. Error nodes are marked inline with their reason.
 - **I5 (done)**: workload descent via ownerReferences — Deployment → active
   ReplicaSet → Pods (and StatefulSet/DaemonSet/Job → Pods), so the graph reaches
   the running Pod.
+- **I6 (done)**: reconciliation freshness — a status distinct from health that
+  tells whether a Kustomization has applied its source's latest revision
+  (up-to-date / behind / failed / suspended), with the applied/source commit ids
+  and sync times, in the CLI tree and the UI (badge on the roots home + a fields
+  panel).
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 
