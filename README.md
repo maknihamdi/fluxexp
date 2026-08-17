@@ -58,9 +58,11 @@ and domain. Error nodes are marked inline with their reason.
 - **I4 (done)**: workload-health resolver — real health for Deployment,
   StatefulSet, DaemonSet, ReplicaSet, Pod and Job (replica counts / phase /
   conditions), removing the `unknown` noise in both CLI and UI.
-- Next: descend workloads (Deployment → ReplicaSet → Pods); operator-CRD
-  descent; cloud verification (e.g. GCP via a `gcp`-domain resolver, using
-  `gcloud`).
+- **I5 (done)**: workload descent via ownerReferences — Deployment → active
+  ReplicaSet → Pods (and StatefulSet/DaemonSet/Job → Pods), so the graph reaches
+  the running Pod.
+- Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
+  via a `gcp`-domain resolver, using `gcloud`).
 
 ## Development
 

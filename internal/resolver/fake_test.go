@@ -13,6 +13,7 @@ import (
 // is treated as namespaced.
 type fakeGetter struct {
 	objs          map[string]*unstructured.Unstructured
+	lists         map[string][]unstructured.Unstructured // "kind|namespace"
 	err           error
 	clusterScoped map[string]bool
 }
@@ -27,6 +28,10 @@ func (f fakeGetter) Get(_ context.Context, _ /*apiVersion*/, kind, namespace, na
 		return nil, fmt.Errorf("not found: %s", key)
 	}
 	return obj, nil
+}
+
+func (f fakeGetter) List(_ context.Context, _ /*apiVersion*/, kind, namespace string) ([]unstructured.Unstructured, error) {
+	return f.lists[kind+"|"+namespace], nil
 }
 
 func (f fakeGetter) Namespaced(_ /*apiVersion*/, kind string) (bool, error) {

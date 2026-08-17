@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/maknihamdi/fluxexp/internal/engine"
@@ -141,6 +142,113 @@ func TestWorkloadResolver_ResolveNoChildren(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 }
+
+// --- descent (ownerReferences) -------------------------------------------
+
+func ownerRefs(kind, ownerUID string) []interface{} {
+	return []interface{}{map[string]interface{}{
+		"apiVersion": "apps/v1", "kind": kind, "name": "owner", "uid": ownerUID,
+	}}
+}
+
+func rsObj(ns, name, uid, ownerUID string, replicas int64) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"namespace": ns, "name": name, "uid": uid,
+			"ownerReferences": ownerRefs("Deployment", ownerUID),
+		},
+		"status": map[string]interface{}{"replicas": replicas},
+	}}
+}
+
+func podOwned(ns, name, ownerUID string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"namespace": ns, "name": name,
+			"ownerReferences": ownerRefs("ReplicaSet", ownerUID),
+		},
+		"status": map[string]interface{}{
+			"phase":      "Running",
+			"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "True"}},
+		},
+	}}
+}
+
+func deployObj(ns, name, uid string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"namespace": ns, "name": name, "uid": uid},
+		"spec":     map[string]interface{}{"replicas": int64(1)},
+		"status":   map[string]interface{}{"readyReplicas": int64(1)},
+	}}
+}
+
+func TestWorkload_DeploymentDescendsToActiveReplicaSets(t *testing.T) {
+	getter := fakeGetter{
+		objs: map[string]*unstructured.Unstructured{
+			"Deployment|ns|web": deployObj("ns", "web", "dep-uid"),
+		},
+		lists: map[string][]unstructured.Unstructured{
+			"ReplicaSet|ns": {
+				*rsObj("ns", "web-active", "rs1", "dep-uid", 1), // owned + active
+				*rsObj("ns", "web-old", "rs2", "dep-uid", 0),    // owned + scaled to 0
+				*rsObj("ns", "other", "rs3", "other-uid", 1),    // not owned
+			},
+		},
+	}
+	rc := &ResolveContext{K8s: getter}
+	res, err := WorkloadResolver{}.Resolve(context.Background(), rc, K8sRef("apps/v1", "Deployment", "ns", "web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Health != engine.Healthy {
+		t.Fatalf("health = %q", res.Health)
+	}
+	if len(res.Children) != 1 || res.Children[0].Coords["name"] != "web-active" {
+		t.Fatalf("want only the active ReplicaSet, got %+v", res.Children)
+	}
+	if !contains(res.Detail, "1 old revisions") {
+		t.Fatalf("detail should note omitted revisions, got %q", res.Detail)
+	}
+}
+
+func TestWorkload_ReplicaSetDescendsToPods(t *testing.T) {
+	getter := fakeGetter{
+		objs: map[string]*unstructured.Unstructured{
+			"ReplicaSet|ns|web": rsObj("ns", "web", "rs-uid", "dep-uid", 1),
+		},
+		lists: map[string][]unstructured.Unstructured{
+			"Pod|ns": {
+				*podOwned("ns", "p1", "rs-uid"),
+				*podOwned("ns", "p2", "rs-uid"),
+				*podOwned("ns", "p3", "other-uid"), // not owned
+			},
+		},
+	}
+	rc := &ResolveContext{K8s: getter}
+	res, err := WorkloadResolver{}.Resolve(context.Background(), rc, K8sRef("apps/v1", "ReplicaSet", "ns", "web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Children) != 2 {
+		t.Fatalf("want 2 owned pods, got %d: %+v", len(res.Children), res.Children)
+	}
+}
+
+func TestWorkload_PodIsLeaf(t *testing.T) {
+	getter := fakeGetter{objs: map[string]*unstructured.Unstructured{
+		"Pod|ns|p1": podOwned("ns", "p1", "rs-uid"),
+	}}
+	rc := &ResolveContext{K8s: getter}
+	res, err := WorkloadResolver{}.Resolve(context.Background(), rc, K8sRef("v1", "Pod", "ns", "p1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Children) != 0 {
+		t.Fatalf("pod must be a leaf, got %d children", len(res.Children))
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestNewDefaultRegistry_Selection(t *testing.T) {
 	reg := NewDefaultRegistry()

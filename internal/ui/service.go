@@ -16,10 +16,9 @@ import (
 )
 
 // cluster is the read-only cluster access the service needs. *k8s.Client
-// satisfies it; tests provide a fake.
+// satisfies it; tests provide a fake. K8sGetter already covers Get/List/Namespaced.
 type cluster interface {
-	resolver.K8sGetter // Get + Namespaced
-	List(ctx context.Context, apiVersion, kind, namespace string) ([]unstructured.Unstructured, error)
+	resolver.K8sGetter
 }
 
 // Service resolves portal requests. It caches one cluster client per context and
