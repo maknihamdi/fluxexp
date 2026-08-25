@@ -30,5 +30,5 @@
 ## 6. Verification
 
 - [x] 6.1 `go build ./...`, `go vet ./...`, `go test ./...` green; `openspec validate --strict`
-- [ ] 6.2 Manual smoke (BLOCKED: cluster gcloud creds expired — needs `gcloud auth login`): CLI `traverse` shows freshness; UI roots home shows freshness badges; node view shows the fields panel
+- [x] 6.2 Manual smoke (2026-08-25, clusters `dev` / `dev-alt`): CLI `traverse` shows freshness — `up-to-date`, `failed` and `suspended` all observed live, with applied/attempted revisions and relative sync times; UI roots home shows freshness badges (16 up-to-date / 6 failed on `flux`); node view (`/api/expand`) carries freshness + the fields panel, short sha with the full revision in `full`. Note: `behind` was not reproducible live (no Ready Kustomization lagging its source on the reachable clusters) and remains covered by unit tests only; badge/panel rendering verified via the API and the frontend code, not visually (browser extension not connected).
 - [x] 6.3 Update `README.md`
