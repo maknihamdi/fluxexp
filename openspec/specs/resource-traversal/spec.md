@@ -29,9 +29,11 @@ The system SHALL define a resolver contract that is not tied to any single
 domain. A resolver MUST declare, via a **matcher**, which references it handles.
 Given a reference it handles, a resolver MUST retrieve the underlying object
 **itself** (through shared clients provided in a resolve context) and return that
-object's **health** plus a list of **child references** to traverse next.
-Resolvers MUST be read-only. Child references MAY belong to a **different
-domain** than the resolver that produced them.
+object's **health** plus a list of **child references** to traverse next. A
+resolver MUST also declare, for a reference it handles, whether that reference is
+**expandable** — that is, whether it can descend to a child layer — without
+retrieving the object. Resolvers MUST be read-only. Child references MAY belong
+to a **different domain** than the resolver that produced them.
 
 #### Scenario: Resolver retrieves and reports children and health
 
@@ -42,6 +44,11 @@ domain** than the resolver that produced them.
 
 - **WHEN** the registry tests a reference against a resolver's matcher
 - **THEN** the matcher decides, from the reference's domain and type, whether that resolver handles it
+
+#### Scenario: Resolver declares expandability
+
+- **WHEN** a resolver is asked whether a reference it matches is expandable
+- **THEN** it answers from the reference alone, without retrieving the object and without erroring
 
 #### Scenario: Children may switch domains
 
@@ -148,4 +155,3 @@ domain-independent set: at minimum **healthy**, **unhealthy**, **unknown**, and
 
 - **WHEN** the result tree is produced
 - **THEN** each node exposes exactly one health status value from the fixed set
-
