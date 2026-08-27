@@ -34,6 +34,10 @@ func (HelmReleaseResolver) Matches(ref engine.Ref) bool {
 	return group == helmReleaseGroup
 }
 
+// Expandable reports true: a HelmRelease always descends into the objects its
+// chart deployed (none, when the release is not stored yet).
+func (HelmReleaseResolver) Expandable(engine.Ref) bool { return true }
+
 // Resolve fetches the HelmRelease, locates and decodes its Helm release storage
 // Secret, and turns the rendered manifest into child references.
 func (HelmReleaseResolver) Resolve(ctx context.Context, rc *ResolveContext, ref engine.Ref) (engine.Result, error) {

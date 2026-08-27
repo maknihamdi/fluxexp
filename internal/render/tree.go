@@ -25,14 +25,19 @@ func Tree(root *engine.Node) string {
 }
 
 func renderChildren(b *strings.Builder, node *engine.Node, prefix string) {
+	// Dependencies come first — what the node needs before what it produces —
+	// and are never descended into, so they render as leaves.
+	total := len(node.Dependencies) + len(node.Children)
+	for i, dep := range node.Dependencies {
+		connector, _ := connectors(i, total)
+		b.WriteString(prefix)
+		b.WriteString(connector)
+		b.WriteString(line(dep))
+		b.WriteString("\n")
+	}
 	for i, child := range node.Children {
-		last := i == len(node.Children)-1
-		connector := "├─ "
-		childPrefix := prefix + "│  "
-		if last {
-			connector = "└─ "
-			childPrefix = prefix + "   "
-		}
+		connector, suffix := connectors(len(node.Dependencies)+i, total)
+		childPrefix := prefix + suffix
 		b.WriteString(prefix)
 		b.WriteString(connector)
 		b.WriteString(line(child))
@@ -44,7 +49,7 @@ func renderChildren(b *strings.Builder, node *engine.Node, prefix string) {
 // line formats a single node.
 func line(n *engine.Node) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s [%s]", glyph(n.Health), n.Ref.Label(), n.Health)
+	fmt.Fprintf(&b, "%s %s%s [%s]", glyph(n.Health), marker(n), n.Ref.Label(), n.Health)
 	if n.Freshness != "" {
 		b.WriteString(" [" + string(n.Freshness) + "]")
 	}
@@ -73,6 +78,29 @@ func fieldsSummary(fields []engine.Field) string {
 		parts = append(parts, strings.ToLower(f.Label)+" "+f.Value)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// connectors returns the branch connector for position i of n.
+func connectors(i, n int) (connector, childPrefix string) {
+	if i == n-1 {
+		return "└─ ", "   "
+	}
+	return "├─ ", "│  "
+}
+
+// marker returns the two-character slot placed between the health glyph and the
+// label. It is three-state: a dependency marker for something the node requires,
+// a chevron for an expandable child, blank padding otherwise — so labels stay
+// column-aligned whatever the mix.
+func marker(n *engine.Node) string {
+	switch {
+	case n.Dependency:
+		return "⇢ "
+	case n.Expandable:
+		return "▸ "
+	default:
+		return "  "
+	}
 }
 
 // glyph returns a status marker for a health value.

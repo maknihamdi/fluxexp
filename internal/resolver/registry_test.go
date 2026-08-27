@@ -10,14 +10,16 @@ import (
 // stubResolver matches refs whose Type equals want and tags its detail so tests
 // can tell which resolver ran.
 type stubResolver struct {
-	want string
-	tag  string
+	want       string
+	tag        string
+	expandable bool
 }
 
 func (s stubResolver) Matches(ref engine.Ref) bool { return ref.Type == s.want }
 func (s stubResolver) Resolve(_ context.Context, _ *ResolveContext, _ engine.Ref) (engine.Result, error) {
 	return engine.Result{Health: engine.Healthy, Detail: s.tag}, nil
 }
+func (s stubResolver) Expandable(_ engine.Ref) bool { return s.expandable }
 
 func TestRegistry_SpecificBeforeFallback(t *testing.T) {
 	reg := NewRegistry()

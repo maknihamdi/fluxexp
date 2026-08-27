@@ -19,6 +19,10 @@ func (GenericK8sResolver) Matches(ref engine.Ref) bool {
 	return ref.Domain == DomainK8s
 }
 
+// Expandable reports false: the fallback reads a Ready condition and never
+// returns children, so an unknown kind is always a leaf.
+func (GenericK8sResolver) Expandable(engine.Ref) bool { return false }
+
 // Resolve fetches the object and derives health from its Ready condition.
 func (GenericK8sResolver) Resolve(ctx context.Context, rc *ResolveContext, ref engine.Ref) (engine.Result, error) {
 	obj, err := rc.GetK8s(ctx, ref)

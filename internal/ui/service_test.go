@@ -63,6 +63,11 @@ func kustomization(ns, name string) *unstructured.Unstructured {
 func gitRepo(ns, name, revision string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"metadata": map[string]interface{}{"namespace": ns, "name": name},
+		"spec": map[string]interface{}{
+			"url":      "https://gitlab.example.com/infra/fleet.git",
+			"ref":      map[string]interface{}{"branch": "main"},
+			"interval": "1m0s",
+		},
 		"status": map[string]interface{}{"artifact": map[string]interface{}{
 			"revision": revision, "lastUpdateTime": "2026-08-13T09:00:00Z",
 		}},
@@ -132,11 +137,15 @@ func TestExpand_ReturnsChildrenWithHealth(t *testing.T) {
 	if node.Freshness != "up-to-date" || len(node.Fields) == 0 {
 		t.Fatalf("expand should carry freshness + fields, got freshness=%q fields=%d", node.Freshness, len(node.Fields))
 	}
+	// The source is a dependency, not a child; children are the inventory only.
+	if len(node.Dependencies) != 1 || node.Dependencies[0].Ref.Name != "flux" {
+		t.Fatalf("want the GitRepository as the single dependency, got %+v", node.Dependencies)
+	}
 	if len(node.Children) != 1 {
-		t.Fatalf("want 1 child, got %d", len(node.Children))
+		t.Fatalf("want 1 child (the inventory entry), got %d", len(node.Children))
 	}
 	if node.Children[0].Ref.Name != "web" || node.Children[0].Context != "dev" {
-		t.Fatalf("child wrong: %+v", node.Children[0])
+		t.Fatalf("inventory child wrong: %+v", node.Children[0])
 	}
 }
 
@@ -152,8 +161,12 @@ func TestExpand_UnresolvableChildIsError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The source still resolves as a dependency; only the inventory child fails.
 	if len(node.Children) != 1 || node.Children[0].Health != string(engine.Error) {
 		t.Fatalf("expected one error child, got %+v", node.Children)
+	}
+	if len(node.Dependencies) != 1 || node.Dependencies[0].Health == string(engine.Error) {
+		t.Fatalf("the source dependency should still resolve, got %+v", node.Dependencies)
 	}
 }
 
@@ -191,6 +204,9 @@ func TestHandlers_RootsAndExpand(t *testing.T) {
 	json.NewDecoder(ok.Body).Decode(&node)
 	ok.Body.Close()
 	if len(node.Children) != 1 {
-		t.Fatalf("expand endpoint: want 1 child, got %d", len(node.Children))
+		t.Fatalf("expand endpoint: want 1 child (inventory), got %d", len(node.Children))
+	}
+	if len(node.Dependencies) != 1 {
+		t.Fatalf("expand endpoint: want the source as a dependency, got %d", len(node.Dependencies))
 	}
 }

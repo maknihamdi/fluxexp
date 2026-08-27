@@ -31,6 +31,16 @@ func (WorkloadResolver) Matches(ref engine.Ref) bool {
 	return ok && kinds[kind]
 }
 
+// Expandable reports whether the workload descends to owned objects. Every kind
+// this resolver claims descends except a Pod, which is the end of the chain.
+func (r WorkloadResolver) Expandable(ref engine.Ref) bool {
+	if !r.Matches(ref) {
+		return false
+	}
+	_, kind, _, _, _ := DecodeK8sRef(ref)
+	return kind != "Pod"
+}
+
 // Resolve fetches the workload and computes its health; it returns no children.
 func (WorkloadResolver) Resolve(ctx context.Context, rc *ResolveContext, ref engine.Ref) (engine.Result, error) {
 	obj, err := rc.GetK8s(ctx, ref)

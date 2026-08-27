@@ -48,6 +48,14 @@ func LoadClient(kubeconfigPath, contextName string) (*Client, error) {
 	// versions; suppress server deprecation warnings so the tree stays clean.
 	cfg.WarningHandler = rest.NoWarnings{}
 
+	// client-go defaults to QPS 5 / Burst 10, which is sized for controllers that
+	// reconcile in the background. Here a single interactive layer can legitimately
+	// need tens of GETs at once, and that default turns it into a multi-second
+	// wait regardless of how the work is scheduled. Every call is a read, so the
+	// limit is raised to something suited to an interactive tool.
+	cfg.QPS = 50
+	cfg.Burst = 100
+
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("building dynamic client: %w", err)

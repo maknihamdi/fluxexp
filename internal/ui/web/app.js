@@ -40,6 +40,24 @@ function freshnessBadge(freshness) {
   return b;
 }
 
+// inlineFields renders fields compactly on a single row, for list entries.
+function inlineFields(fields) {
+  const wrap = document.createElement("div");
+  wrap.className = "detail inline-fields";
+  for (const f of fields) {
+    const l = document.createElement("span");
+    l.className = "iflabel";
+    l.textContent = f.label.toLowerCase();
+    const v = document.createElement("span");
+    v.className = "ifvalue";
+    v.textContent = f.value;
+    if (f.full) v.title = f.full;
+    wrap.appendChild(l);
+    wrap.appendChild(v);
+  }
+  return wrap;
+}
+
 // fieldsPanel renders label/value fields; the full value (if any) is the title.
 function fieldsPanel(fields) {
   const wrap = document.createElement("div");
@@ -125,9 +143,35 @@ function renderBreadcrumb() {
   });
 }
 
-function nodeRow(node, { onClick } = {}) {
+// listEntry renders one list entry: its row, plus its own dependencies nested
+// under it when it has any — so a listed Kustomization shows its source and what
+// it waits on without being opened.
+function listEntry(node, { dependency } = {}) {
+  const row = nodeRow(node, { onClick: () => drillTo(node.ref), dependency });
+  const deps = node.dependencies || [];
+  if (!deps.length) return row;
+
+  const group = document.createElement("div");
+  group.className = "entry";
+  group.appendChild(row);
+  const nested = document.createElement("div");
+  nested.className = "nested-deps";
+  for (const dep of deps) {
+    nested.appendChild(nodeRow(dep, { onClick: () => drillTo(dep.ref), dependency: true }));
+  }
+  group.appendChild(nested);
+  return group;
+}
+
+function nodeRow(node, { onClick, dependency } = {}) {
   const row = document.createElement("div");
-  row.className = "row";
+  // An expandable node carries a subtree: the accent tells the user, before any
+  // click, that opening it leads somewhere. A dependency is styled apart: it is
+  // something the node needs, not something it produces.
+  const classes = ["row"];
+  if (dependency) classes.push("dep");
+  else if (node.expandable) classes.push("container");
+  row.className = classes.join(" ");
   row.appendChild(badge(node.health));
 
   const grow = document.createElement("div");
@@ -135,12 +179,31 @@ function nodeRow(node, { onClick } = {}) {
   const ref = node.ref || {};
   const name = document.createElement("div");
   name.className = "name";
-  name.textContent = ref.display || `${ref.type} ${ref.name}`;
-  const detail = document.createElement("div");
-  detail.className = "detail";
-  detail.textContent = node.error ? node.error : (node.detail || "");
+  if (dependency) {
+    const arrow = document.createElement("span");
+    arrow.className = "chevron dep-arrow";
+    arrow.textContent = "\u21e2";
+    arrow.title = "Required by this resource";
+    name.appendChild(arrow);
+  } else if (node.expandable) {
+    const chev = document.createElement("span");
+    chev.className = "chevron";
+    chev.textContent = "\u25b8";
+    chev.title = "Contains other resources — click to open";
+    name.appendChild(chev);
+  }
+  name.appendChild(document.createTextNode(ref.display || `${ref.type} ${ref.name}`));
   grow.appendChild(name);
-  grow.appendChild(detail);
+  // Flux objects carry their fields inline — repo, branch, interval — so the
+  // reader never has to open a row to learn where the code comes from.
+  if (node.fields && node.fields.length) {
+    grow.appendChild(inlineFields(node.fields));
+  } else {
+    const detail = document.createElement("div");
+    detail.className = "detail";
+    detail.textContent = node.error ? node.error : (node.detail || "");
+    grow.appendChild(detail);
+  }
   row.appendChild(grow);
 
   const nx = document.createElement("button");
@@ -251,7 +314,13 @@ async function renderExplore() {
   if (nfb) hh.appendChild(nfb);
   const t = document.createElement("span");
   t.className = "title";
-  t.textContent = node.ref.display || `${node.ref.type} ${node.ref.name}`;
+  if (node.expandable) {
+    const chev = document.createElement("span");
+    chev.className = "chevron";
+    chev.textContent = "\u25b8";
+    t.appendChild(chev);
+  }
+  t.appendChild(document.createTextNode(node.ref.display || `${node.ref.type} ${node.ref.name}`));
   hh.appendChild(t);
   head.appendChild(hh);
   if (node.fields && node.fields.length) head.appendChild(fieldsPanel(node.fields));
@@ -261,24 +330,41 @@ async function renderExplore() {
     d.textContent = node.error || node.detail;
     head.appendChild(d);
   }
+
+  // Dependencies live inside the node's own card: what it needs, grouped with
+  // it, rather than mixed into what it applies. No block at all when there are
+  // none.
+  const deps = node.dependencies || [];
+  if (deps.length) {
+    const wrap = document.createElement("div");
+    wrap.className = "deps";
+    const dt = document.createElement("div");
+    dt.className = "deps-title";
+    dt.textContent = "depends on";
+    wrap.appendChild(dt);
+    for (const dep of deps) {
+      wrap.appendChild(listEntry(dep, { dependency: true }));
+    }
+    head.appendChild(wrap);
+  }
   v.appendChild(head);
 
   const title = document.createElement("div");
   title.className = "section-title";
   const children = node.children || [];
-  title.textContent = `children · ${children.length}`;
+  title.textContent = `applies · ${children.length}`;
   v.appendChild(title);
 
   if (children.length === 0) {
     const e = document.createElement("div");
     e.className = "empty";
-    e.textContent = "No children — this is a leaf in the current layer.";
+    e.textContent = "Applies nothing — this is a leaf in the current layer.";
     v.appendChild(e);
     return;
   }
 
   for (const child of children) {
-    v.appendChild(nodeRow(child, { onClick: () => drillTo(child.ref) }));
+    v.appendChild(listEntry(child));
   }
 }
 
