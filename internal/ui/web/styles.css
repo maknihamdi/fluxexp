@@ -44,9 +44,18 @@ body {
 main { max-width: 1000px; margin: 0 auto; padding: 1rem; }
 
 .breadcrumb { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; margin-bottom: .75rem; }
+/* an explicit display would otherwise beat the browser's [hidden] rule, and the
+   bar carries the up control — which must not show on the roots home */
+.breadcrumb[hidden] { display: none; }
 .breadcrumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
 .breadcrumb a:hover { text-decoration: underline; }
 .breadcrumb .sep { color: var(--muted); }
+.breadcrumb .crumbs { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
+.breadcrumb .up {
+  color: var(--muted); border: 1px solid var(--border); background: transparent;
+  border-radius: 6px; padding: .2rem .45rem; margin-right: .5rem; cursor: pointer; font-size: .8rem;
+}
+.breadcrumb .up:hover { color: var(--accent); border-color: var(--accent); }
 
 .card {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;

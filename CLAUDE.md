@@ -103,6 +103,15 @@ request in a `memoGetter` (one layer asks for the same shared source many times;
 for **one request only**, because caching across requests would serve stale health), and
 resolves a layer's entries concurrently through a bounded pool (`layerConcurrency`).
 
+The frontend keeps **the URL as the source of truth for where the user is**:
+`state.trail` is a projection of `?p=<hop>~<hop>…` (a hop is `type:ns:name`, or
+`domain:type:ns:name` off the `kubernetes` default), every navigation pushes a
+history entry, and `popstate` re-reads the URL — so a shared link and a Back press
+render identically. A trail is restored without resolving its intermediate hops
+(labels are derived from the type, mirroring `friendlyLabel`), and going back
+**re-resolves**: caching a visited layer client-side would serve stale health, the
+same reason the server memo lives for one request only.
+
 `dropNestedDuplicates` enforces, in the UI only, that a layer shows each reference once: a row
 already displayed as another entry's nested dependency is dropped, unless it carries its own
 dependency group (so mutual references cannot erase both). It is UI-only on purpose — in the CLI

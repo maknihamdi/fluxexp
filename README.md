@@ -92,6 +92,10 @@ dependencies nested inside it, and what it applies listed below.
   grouped with it, in one card in the UI. Flux source / image-automation objects
   expose their useful fields (repository, branch/tag, interval, scanned image,
   selected tag) inline, without a click.
+- **I8 (done)**: navigable UI — the exploration path lives in the URL
+  (`/?context=<ctx>&p=<type>:<ns>:<name>~…`), so any node can be reloaded,
+  bookmarked and shared; browser Back/Forward walk the trail instead of leaving
+  the app, and the breadcrumb gains an up-to-parent control.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 
