@@ -1,9 +1,14 @@
 "use strict";
 
+// The URL is the source of truth for where the user is: state.trail is a
+// projection of it, written by every navigation and re-read on popstate, so a
+// shared link and a Back press land in exactly the same view.
 const state = {
   context: "",
   trail: [], // array of ref DTOs (drill path); empty => home
 };
+
+const DOMAIN_K8S = "kubernetes";
 
 const el = (sel) => document.querySelector(sel);
 const viewEl = () => el("#view");
@@ -90,6 +95,82 @@ function expandQuery(ref) {
   return `/api/expand?${p.toString()}`;
 }
 
+// ---- refs and URLs --------------------------------------------------------
+
+// labelFor mirrors friendlyLabel in internal/ui/dto.go: "<Kind> <ns>/<name>".
+// A trail rebuilt from the URL carries no display label — it is derived from the
+// type instead, so a shared link can never show a stale one.
+function labelFor(ref) {
+  const typ = (ref && ref.type) || "";
+  const i = typ.lastIndexOf("|");
+  const kind = i >= 0 ? typ.slice(i + 1) : typ;
+  const name = (ref && ref.name) || "";
+  if (ref && ref.namespace) return `${kind} ${ref.namespace}/${name}`;
+  if (name) return `${kind} ${name}`;
+  return kind;
+}
+
+const refLabel = (ref) => (ref && ref.display) || labelFor(ref);
+
+// encodeComponent escapes a hop component on its own — so a separator inside a
+// name can never break parsing — then restores "/" and "|", which are legal in a
+// query string and keep the address bar readable ("…fluxcd.io/v1|Kustomization").
+function encodeComponent(v) {
+  // encodeURIComponent leaves "~" alone, and "~" separates hops — escape it
+  // explicitly before restoring the two characters kept literal.
+  return encodeURIComponent(v || "")
+    .replace(/~/g, "%7E")
+    .replace(/%2F/g, "/")
+    .replace(/%7C/g, "|");
+}
+
+// encodeHop renders a ref as "type:ns:name", prefixed with the domain only when
+// it is not the default — every hop is kubernetes today, a future gcp hop says so.
+function encodeHop(ref) {
+  const parts = [ref.type || "", ref.namespace || "", ref.name || ""];
+  if (ref.domain && ref.domain !== DOMAIN_K8S) parts.unshift(ref.domain);
+  return parts.map(encodeComponent).join(":");
+}
+
+// decodeHop is the inverse; it throws on anything it cannot read, so a mangled
+// path is reported rather than turned into a half-built ref.
+function decodeHop(hop) {
+  const parts = hop.split(":").map((v) => decodeURIComponent(v));
+  let domain = DOMAIN_K8S;
+  if (parts.length === 4) domain = parts.shift();
+  else if (parts.length !== 3) throw new Error(`bad path segment "${hop}"`);
+  const ref = { domain, type: parts[0], namespace: parts[1], name: parts[2] };
+  if (!ref.type || !ref.name) throw new Error(`bad path segment "${hop}"`);
+  ref.display = labelFor(ref);
+  return ref;
+}
+
+const encodeTrail = (trail) => trail.map(encodeHop).join("~");
+const decodeTrail = (p) => (p ? p.split("~").map(decodeHop) : []);
+
+// urlFor builds an address by hand: URLSearchParams' form-urlencoded serializer
+// would escape "~" and ":" into %7E and %3A and lose the trail's readability.
+function urlFor(contextName, trail) {
+  const parts = [];
+  if (contextName) parts.push(`context=${encodeURIComponent(contextName)}`);
+  const p = encodeTrail(trail || []);
+  if (p) parts.push(`p=${p}`);
+  return parts.length ? `/?${parts.join("&")}` : "/";
+}
+
+// rawParam reads a query parameter WITHOUT decoding it. URLSearchParams would
+// percent-decode the whole value first, turning an encoded ":" inside a name
+// into a real separator before each component gets its own decode.
+function rawParam(name) {
+  const q = location.search.replace(/^\?/, "");
+  if (!q) return null;
+  for (const kv of q.split("&")) {
+    const i = kv.indexOf("=");
+    if ((i < 0 ? kv : kv.slice(0, i)) === name) return i < 0 ? "" : kv.slice(i + 1);
+  }
+  return null;
+}
+
 // ---- context bar ----------------------------------------------------------
 
 async function loadContexts() {
@@ -102,34 +183,44 @@ async function loadContexts() {
     o.textContent = c.current ? `${c.name} (current)` : c.name;
     sel.appendChild(o);
   }
-  const url = new URLSearchParams(location.search);
-  const wanted = url.get("context");
+  // state.context may already be set from the URL; otherwise fall back to the
+  // kubeconfig's current-context.
   const current = (contexts.find((c) => c.current) || contexts[0] || {}).name || "";
-  state.context = wanted || current;
-  sel.value = state.context;
-  el("#ctx-active").textContent = state.context ? `→ ${state.context}` : "";
+  state.context = state.context || current;
+  syncContextBar();
   sel.onchange = () => {
+    // A trail is a path through one cluster: carrying it into another context
+    // would address objects that may not exist there.
     state.context = sel.value;
-    el("#ctx-active").textContent = `→ ${state.context}`;
-    state.trail = [];
-    render();
+    navigateTo([]);
   };
+}
+
+// syncContextBar reflects state.context in the selector and the header, so a
+// history entry carrying another context is shown as such.
+function syncContextBar() {
+  el("#context").value = state.context;
+  el("#ctx-active").textContent = state.context ? `→ ${state.context}` : "";
 }
 
 // ---- rendering ------------------------------------------------------------
 
 function renderBreadcrumb() {
-  const c = crumbEl();
+  const bar = crumbEl();
+  const c = el("#crumbs");
+  // The bar holds the up control, so it is hidden as a whole on the roots home:
+  // there is no parent to go up to.
   if (state.trail.length === 0) {
-    c.hidden = true;
+    bar.hidden = true;
     c.innerHTML = "";
     return;
   }
-  c.hidden = false;
+  bar.hidden = false;
+  el("#up").onclick = goUp;
   c.innerHTML = "";
   const home = document.createElement("a");
   home.textContent = "roots";
-  home.onclick = () => { state.trail = []; syncURL(); render(); };
+  home.onclick = () => navigateTo([]);
   c.appendChild(home);
   state.trail.forEach((ref, i) => {
     const sep = document.createElement("span");
@@ -137,8 +228,8 @@ function renderBreadcrumb() {
     sep.textContent = " / ";
     c.appendChild(sep);
     const a = document.createElement("a");
-    a.textContent = ref.display || `${ref.type} ${ref.name}`;
-    a.onclick = () => { state.trail = state.trail.slice(0, i + 1); syncURL(); render(); };
+    a.textContent = refLabel(ref);
+    a.onclick = () => navigateTo(state.trail.slice(0, i + 1));
     c.appendChild(a);
   });
 }
@@ -192,7 +283,7 @@ function nodeRow(node, { onClick, dependency } = {}) {
     chev.title = "Contains other resources — click to open";
     name.appendChild(chev);
   }
-  name.appendChild(document.createTextNode(ref.display || `${ref.type} ${ref.name}`));
+  name.appendChild(document.createTextNode(refLabel(ref)));
   grow.appendChild(name);
   // Flux objects carry their fields inline — repo, branch, interval — so the
   // reader never has to open a row to learn where the code comes from.
@@ -285,7 +376,7 @@ async function renderExplore() {
   renderBreadcrumb();
   const ref = state.trail[state.trail.length - 1];
   const v = viewEl();
-  v.innerHTML = `<div class="spinner">Resolving ${ref.display || ref.name}…</div>`;
+  v.innerHTML = `<div class="spinner">Resolving ${refLabel(ref)}…</div>`;
 
   let node;
   try {
@@ -320,7 +411,7 @@ async function renderExplore() {
     chev.textContent = "\u25b8";
     t.appendChild(chev);
   }
-  t.appendChild(document.createTextNode(node.ref.display || `${node.ref.type} ${node.ref.name}`));
+  t.appendChild(document.createTextNode(refLabel(node.ref)));
   hh.appendChild(t);
   head.appendChild(hh);
   if (node.fields && node.fields.length) head.appendChild(fieldsPanel(node.fields));
@@ -375,55 +466,66 @@ function render() {
 
 // ---- navigation -----------------------------------------------------------
 
-function drillTo(ref) {
-  state.trail.push(ref);
-  syncURL();
+// navigateTo moves to a trail: it writes the URL first, then renders from the
+// new state — the order boot and popstate follow too, so every path into a view
+// goes through the same steps.
+function navigateTo(trail) {
+  state.trail = trail;
+  syncContextBar();
+  history.pushState(null, "", urlFor(state.context, state.trail));
   render();
 }
 
+function drillTo(ref) {
+  navigateTo(state.trail.concat([ref]));
+}
+
+// goUp is a forward navigation, not history.back(): the previous history entry
+// may be a sibling the user jumped to, or another exploration entirely — the
+// parent is a property of the trail, not of where the user came from.
+function goUp() {
+  navigateTo(state.trail.slice(0, -1));
+}
+
 function newExploration(ref) {
-  const p = new URLSearchParams({
-    context: state.context,
-    e_domain: ref.domain || "kubernetes",
-    e_type: ref.type || "",
-    e_ns: ref.namespace || "",
-    e_name: ref.name || "",
-    e_display: ref.display || "",
-  });
-  window.open(`/?${p.toString()}`, "_blank");
+  window.open(urlFor(state.context, [ref]), "_blank");
 }
 
-// Keep the top-level context in the URL so a reload/new tab is reproducible.
-function syncURL() {
-  const p = new URLSearchParams();
-  if (state.context) p.set("context", state.context);
-  history.replaceState(null, "", `/?${p.toString()}`);
-}
-
-function seedFromURL() {
-  const u = new URLSearchParams(location.search);
-  const type = u.get("e_type");
-  const name = u.get("e_name");
-  if (type && name) {
-    state.trail = [{
-      domain: u.get("e_domain") || "kubernetes",
-      type,
-      namespace: u.get("e_ns") || "",
-      name,
-      display: u.get("e_display") || "",
-    }];
+// readURL projects the URL onto state — the single decoder used by boot and by
+// popstate. It returns a message when the path cannot be decoded, the trail then
+// falling back to the roots home rather than rendering half of it.
+function readURL() {
+  const ctx = rawParam("context");
+  if (ctx) state.context = decodeURIComponent(ctx);
+  try {
+    state.trail = decodeTrail(rawParam("p"));
+    return "";
+  } catch (e) {
+    state.trail = [];
+    return e.message;
   }
 }
 
 // ---- boot -----------------------------------------------------------------
 
+window.addEventListener("popstate", () => {
+  const err = readURL();
+  if (err) toast(`Cannot read that path: ${err}`);
+  syncContextBar();
+  render();
+});
+
 (async function main() {
+  const err = readURL();
   try {
     await loadContexts();
   } catch (e) {
     toast(`Cannot list contexts: ${e.message}`);
     return;
   }
-  seedFromURL();
+  if (err) toast(`Cannot read that path: ${err}`);
+  // Normalize the address of the entry the user landed on, without adding a
+  // history entry of its own.
+  history.replaceState(null, "", urlFor(state.context, state.trail));
   render();
 })();
