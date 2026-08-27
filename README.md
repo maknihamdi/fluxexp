@@ -46,6 +46,23 @@ fluxexp traverse -n flux-system --name apps --kubeconfig ~/.kube/config --contex
 Output is an indented tree; each line shows the node's health, type, coordinates
 and domain. Error nodes are marked inline with their reason.
 
+A node's **dependencies** — what it needs to reconcile — are printed first with a
+`⇢` marker and their fields inline; they are resolved one level deep and never
+descended into, so a `dependsOn` chain never explodes the tree. Then come the
+objects it **applies**, ordered Flux-first, then other containers (marked `▸`),
+then leaves:
+
+```
+✖ ▸ Kustomization flux/cert-issuer [unhealthy] [failed] — error dependency 'flux/cert-manager' is not ready
+├─ ✔ ⇢ GitRepository flux/flux [healthy] — repo gitlab/infra/fleet · branch main · interval 1m
+├─ ✖ ⇢ Kustomization flux/cert-manager [unhealthy] [failed] — error dependency 'flux/alloy' is not ready
+├─ ✔   Certificate cert-manager/lets-encrypt-dns-account [healthy]
+└─ ?   Policy cert-manager/team-app-read-cf-token [unknown]
+```
+
+The web UI groups the same information into one card: the node with its
+dependencies nested inside it, and what it applies listed below.
+
 ## Increment roadmap
 
 - **I1 (done)**: traversal engine + Flux Kustomization resolver
@@ -66,6 +83,15 @@ and domain. Error nodes are marked inline with their reason.
   (up-to-date / behind / failed / suspended), with the applied/source commit ids
   and sync times, in the CLI tree and the UI (badge on the roots home + a fields
   panel).
+- **I7 (done)**: expandable-first exploration — resolvers declare whether a
+  reference can descend; children are ordered in three stable tiers (Flux
+  objects, then other containers, then leaves); the CLI marks containers with a
+  chevron and the UI adds an accent. The graph also gains a second edge class,
+  **dependencies** — shown with their health and fields but never descended into
+  — so a Kustomization surfaces its `sourceRef` and its `dependsOn` targets
+  grouped with it, in one card in the UI. Flux source / image-automation objects
+  expose their useful fields (repository, branch/tag, interval, scanned image,
+  selected tag) inline, without a click.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 

@@ -110,3 +110,29 @@ main { max-width: 1000px; margin: 0 auto; padding: 1rem; }
   box-shadow: var(--shadow); font-size: .85rem; z-index: 10;
 }
 .spinner { color: var(--muted); padding: 1rem; }
+
+/* expandable nodes: a chevron plus a left accent bar, deliberately distinct from
+   the outlined health badges and the filled freshness badges */
+.chevron { color: var(--accent); margin-right: .4rem; font-size: .9em; }
+.row.container {
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.row.container .name { font-weight: 600; }
+
+/* dependency block nested inside a node's card */
+.deps { margin-top: .7rem; border-top: 1px dashed var(--border); padding-top: .6rem; }
+.deps-title { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .4rem; }
+.row.dep { background: transparent; border-style: dashed; }
+.dep-arrow { color: var(--muted); }
+
+/* fields rendered inline on a list row */
+.inline-fields { display: flex; flex-wrap: wrap; gap: .15rem .5rem; align-items: baseline; white-space: normal; }
+.inline-fields .iflabel { color: var(--muted); font-size: .72rem; }
+.inline-fields .ifvalue { font-size: .78rem; margin-right: .3rem; }
+
+/* a list entry carrying its own dependencies, nested under its row */
+.entry { margin-bottom: .4rem; }
+.entry > .row { margin-bottom: 0; }
+.nested-deps { margin: 0 0 0 1.4rem; padding-left: .6rem; border-left: 1px dashed var(--border); }
+.nested-deps .row { margin: .25rem 0 0; padding: .3rem .5rem; font-size: .92em; }

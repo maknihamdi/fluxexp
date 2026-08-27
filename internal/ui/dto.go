@@ -33,7 +33,14 @@ type NodeDTO struct {
 	Detail    string     `json:"detail,omitempty"`
 	Err       string     `json:"error,omitempty"`
 	Fields    []FieldDTO `json:"fields,omitempty"`
-	Children  []NodeDTO  `json:"children,omitempty"`
+	// Expandable reports whether this node can descend to a child layer, so the
+	// frontend marks it without re-deriving type rules in JavaScript.
+	Expandable bool `json:"expandable"`
+	// Dependencies are what this node requires to reconcile (its source, the
+	// Kustomizations it depends on). They are resolved one level deep and are
+	// never repeated among Children.
+	Dependencies []NodeDTO `json:"dependencies,omitempty"`
+	Children     []NodeDTO `json:"children,omitempty"`
 	// Context is the kube context this node was resolved under.
 	Context string `json:"context"`
 }

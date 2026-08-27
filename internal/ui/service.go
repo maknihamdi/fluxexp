@@ -121,15 +121,16 @@ func (s *Service) Expand(contextName string, ref engine.Ref) (NodeDTO, error) {
 	if err != nil {
 		return node, err
 	}
-	rc := &resolver.ResolveContext{K8s: c}
+	// One layer asks for the same objects repeatedly — every listed Kustomization
+	// resolves its own source, and they usually share one. Memoize for the
+	// duration of this request only.
+	rc := &resolver.ResolveContext{K8s: newMemoGetter(c)}
 
-	r := s.registry.For(ref)
-	if r == nil {
-		node.Health = string(engine.Error)
-		node.Err = "no resolver for " + ref.Domain + "/" + ref.Type
-		return node, nil
-	}
-	res, err := r.Resolve(context.Background(), rc, ref)
+	// Resolve through the registry's own entry point, the one the engine uses, so
+	// tier ordering, de-duplication against dependencies and the expandable flag
+	// are applied here exactly as they are for the CLI — rather than being
+	// re-implemented, and drifting.
+	res, err := s.registry.ResolveFunc(context.Background(), rc)(ref)
 	if err != nil {
 		node.Health = string(engine.Error)
 		node.Err = err.Error()
@@ -139,26 +140,132 @@ func (s *Service) Expand(contextName string, ref engine.Ref) (NodeDTO, error) {
 	node.Freshness = string(res.Freshness)
 	node.Detail = res.Detail
 	node.Fields = fieldsToDTO(res.Fields)
-	for _, child := range res.Children {
-		node.Children = append(node.Children, s.childHealth(rc, child, contextName))
-	}
+	node.Expandable = res.Expandable
+
+	// Dependencies are resolved one level deep, like the engine does: enough for
+	// the card to show each one's health and fields, never descending into them.
+	node.Dependencies = s.resolveLayer(rc, res.Dependencies, contextName)
+	node.Children = s.resolveLayer(rc, res.Children, contextName)
+
+	// A reference can be applied by this node *and* be the source of one of its
+	// own children — Flux project layouts routinely apply a Kustomization next to
+	// the GitRepository it reconciles from. It is then already shown grouped
+	// under that child, so drop the redundant top-level row.
+	node.Children = dropNestedDuplicates(node.Children, node.Dependencies)
 	return node, nil
+}
+
+// dropNestedDuplicates removes a top-level entry that is already displayed as
+// another entry's nested dependency in the same layer. The grouped occurrence
+// wins: it is the one that says why the reference is there.
+//
+// An entry carrying a dependency group of its own is always kept, so two entries
+// that reference each other cannot make both vanish.
+func dropNestedDuplicates(children, cardDeps []NodeDTO) []NodeDTO {
+	nested := map[string]struct{}{}
+	collect := func(entries []NodeDTO) {
+		for _, e := range entries {
+			for _, dep := range e.Dependencies {
+				nested[dtoKey(dep.Ref)] = struct{}{}
+			}
+		}
+	}
+	collect(children)
+	collect(cardDeps)
+	if len(nested) == 0 {
+		return children
+	}
+
+	kept := children[:0:0]
+	for _, c := range children {
+		_, dup := nested[dtoKey(c.Ref)]
+		if dup && len(c.Dependencies) == 0 {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept
+}
+
+// dtoKey identifies a reference for comparison within a layer.
+func dtoKey(r RefDTO) string {
+	return r.Domain + "|" + r.Type + "|" + r.Namespace + "|" + r.Name
+}
+
+// layerConcurrency bounds how many entries of one layer are resolved at once.
+// The entries are independent read-only lookups dominated by round-trip latency,
+// so a small pool turns a serial walk into a near-constant wait without flooding
+// the API server.
+const layerConcurrency = 8
+
+// resolveLayer resolves every entry of a layer, concurrently but order-preserving:
+// results are written by index, so the tier ordering computed upstream survives.
+func (s *Service) resolveLayer(rc *resolver.ResolveContext, refs []engine.Ref, contextName string) []NodeDTO {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]NodeDTO, len(refs))
+	sem := make(chan struct{}, layerConcurrency)
+	var wg sync.WaitGroup
+
+	for i, ref := range refs {
+		wg.Add(1)
+		go func(i int, ref engine.Ref) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			out[i] = s.listedNode(rc, ref, contextName)
+		}(i, ref)
+	}
+	wg.Wait()
+	return out
+}
+
+// listedNode renders one entry of a list: the object itself, plus the
+// dependencies it declares in its own manifest, grouped with it.
+//
+// It never resolves the entry. A Kustomization's spec.sourceRef and
+// spec.dependsOn are in the YAML fetched for its health, so reading them costs
+// nothing — and its inventory, which is what resolving would compute, is
+// irrelevant to the group. Each derived dependency is then retrieved once, for
+// its health and fields only.
+func (s *Service) listedNode(rc *resolver.ResolveContext, ref engine.Ref, contextName string) NodeDTO {
+	node, obj := s.fetchedNode(rc, ref, contextName)
+	if obj == nil {
+		return node
+	}
+	for _, dep := range resolver.DependencyRefsForFetched(ref, obj) {
+		node.Dependencies = append(node.Dependencies, s.childHealth(rc, dep, contextName))
+	}
+	return node
 }
 
 // childHealth computes a cheap health for a child (fetch + Ready condition),
 // without running the child's full resolver.
 func (s *Service) childHealth(rc *resolver.ResolveContext, ref engine.Ref, contextName string) NodeDTO {
-	child := NodeDTO{Ref: refToDTO(ref), Context: contextName}
+	node, _ := s.fetchedNode(rc, ref, contextName)
+	return node
+}
+
+// fetchedNode retrieves the object once and derives everything obtainable from
+// it: health, detail and fields. It returns the object too, so a caller can read
+// more from it without a second call. A failed retrieval yields an error node
+// and a nil object.
+func (s *Service) fetchedNode(rc *resolver.ResolveContext, ref engine.Ref, contextName string) (NodeDTO, *unstructured.Unstructured) {
+	node := NodeDTO{Ref: refToDTO(ref), Context: contextName, Expandable: s.registry.Expandable(ref)}
 	obj, err := rc.GetK8s(context.Background(), ref)
 	if err != nil {
-		child.Health = string(engine.Error)
-		child.Err = err.Error()
-		return child
+		node.Health = string(engine.Error)
+		node.Err = err.Error()
+		return node, nil
 	}
 	h, d := resolver.K8sHealth(obj)
-	child.Health = string(h)
-	child.Detail = d
-	return child
+	node.Health = string(h)
+	node.Detail = d
+	// The object is already in hand, so its fields cost nothing: a Flux source or
+	// image row shows repo/branch/interval without the user opening it.
+	node.Fields = fieldsToDTO(resolver.FieldsForFetched(ref, obj))
+	return node, obj
 }
 
 // rootSummary extracts the home-page summary from a Kustomization object and its

@@ -156,3 +156,97 @@ func TestTraverse_EveryNodeHasHealth(t *testing.T) {
 	}
 	check(got)
 }
+
+func TestTraverse_DependencyIsResolvedButNotDescended(t *testing.T) {
+	// dep would return a child of its own; the engine must not follow it.
+	resolve := func(ref Ref) (Result, error) {
+		switch ref.Type {
+		case "root":
+			return Result{Health: Healthy, Dependencies: []Ref{{Domain: "k", Type: "dep"}}}, nil
+		case "dep":
+			return Result{Health: Healthy, Children: []Ref{{Domain: "k", Type: "deep"}}}, nil
+		default:
+			t.Errorf("engine descended into a dependency: resolved %q", ref.Type)
+			return Result{Health: Healthy}, nil
+		}
+	}
+	root := Traverse(Ref{Domain: "k", Type: "root"}, resolve)
+
+	if len(root.Dependencies) != 1 {
+		t.Fatalf("got %d dependencies, want 1", len(root.Dependencies))
+	}
+	if len(root.Dependencies[0].Children) != 0 {
+		t.Errorf("a dependency must carry no children, got %d", len(root.Dependencies[0].Children))
+	}
+	if root.Dependencies[0].Health != Healthy {
+		t.Errorf("dependency health = %q, want it resolved", root.Dependencies[0].Health)
+	}
+}
+
+func TestTraverse_DependencyChainDoesNotFollow(t *testing.T) {
+	resolved := map[string]int{}
+	resolve := func(ref Ref) (Result, error) {
+		resolved[ref.Type]++
+		switch ref.Type {
+		case "a":
+			return Result{Health: Healthy, Dependencies: []Ref{{Domain: "k", Type: "b"}}}, nil
+		case "b":
+			return Result{Health: Healthy, Dependencies: []Ref{{Domain: "k", Type: "c"}}}, nil
+		default:
+			return Result{Health: Healthy}, nil
+		}
+	}
+	Traverse(Ref{Domain: "k", Type: "a"}, resolve)
+
+	if resolved["c"] != 0 {
+		t.Errorf("the chain must stop at the first level; %q was resolved %d time(s)", "c", resolved["c"])
+	}
+}
+
+func TestTraverse_UnresolvableDependencyIsErrorNode(t *testing.T) {
+	resolve := func(ref Ref) (Result, error) {
+		if ref.Type == "missing" {
+			return Result{}, errors.New("not found")
+		}
+		return Result{Health: Healthy, Dependencies: []Ref{{Domain: "k", Type: "missing"}}}, nil
+	}
+	root := Traverse(Ref{Domain: "k", Type: "root"}, resolve)
+
+	if root.Health != Healthy {
+		t.Errorf("parent health = %q, want it untouched by a failing dependency", root.Health)
+	}
+	if len(root.Dependencies) != 1 || root.Dependencies[0].Health != Error {
+		t.Fatalf("want one error dependency, got %+v", root.Dependencies)
+	}
+	if root.Dependencies[0].Err == "" {
+		t.Error("the error dependency must carry its reason")
+	}
+}
+
+func TestTraverse_DependencyDoesNotSuppressLaterChildExpansion(t *testing.T) {
+	// "shared" is first seen as a dependency, then as a real child. The child
+	// occurrence must still expand.
+	resolve := func(ref Ref) (Result, error) {
+		switch ref.Type {
+		case "root":
+			return Result{Health: Healthy,
+				Dependencies: []Ref{{Domain: "k", Type: "shared"}},
+				Children:     []Ref{{Domain: "k", Type: "branch"}}}, nil
+		case "branch":
+			return Result{Health: Healthy, Children: []Ref{{Domain: "k", Type: "shared"}}}, nil
+		case "shared":
+			return Result{Health: Healthy, Children: []Ref{{Domain: "k", Type: "leaf"}}}, nil
+		default:
+			return Result{Health: Healthy}, nil
+		}
+	}
+	root := Traverse(Ref{Domain: "k", Type: "root"}, resolve)
+
+	shared := root.Children[0].Children[0]
+	if shared.Visited {
+		t.Error("the child occurrence must not be marked visited by the earlier dependency")
+	}
+	if len(shared.Children) != 1 {
+		t.Errorf("the child occurrence must expand, got %d children", len(shared.Children))
+	}
+}

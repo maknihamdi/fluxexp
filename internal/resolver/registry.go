@@ -29,6 +29,7 @@ func NewDefaultRegistry() *Registry {
 	reg.Register(KustomizationResolver{})
 	reg.Register(HelmReleaseResolver{})
 	reg.Register(WorkloadResolver{})
+	reg.Register(FluxObjectResolver{})
 	reg.RegisterFallback(DomainK8s, GenericK8sResolver{})
 	return reg
 }
@@ -59,6 +60,46 @@ func (r *Registry) For(ref engine.Ref) Resolver {
 	return nil
 }
 
+// Expandable reports whether ref can descend to a child layer, by delegating to
+// the resolver that would resolve it (same specific-before-fallback selection).
+// A reference no resolver claims is not expandable.
+func (r *Registry) Expandable(ref engine.Ref) bool {
+	res := r.For(ref)
+	if res == nil {
+		return false
+	}
+	return res.Expandable(ref)
+}
+
+// OrderChildren returns refs in three tiers: Flux objects, then the remaining
+// expandable references, then everything else. A Flux object outranks a
+// non-Flux container even when it is itself a leaf — reading a Kustomization,
+// "what drives this?" comes before "what does it run?".
+//
+// The partition is stable: each tier keeps the order the resolver produced
+// (roughly apply order for an inventory), so output stays deterministic.
+//
+// This is the single implementation of the rule: ResolveFunc applies it for the
+// engine (and so the CLI), and the web UI applies it to the children it renders.
+func (r *Registry) OrderChildren(refs []engine.Ref) []engine.Ref {
+	if len(refs) < 2 {
+		return refs
+	}
+	flux := make([]engine.Ref, 0, len(refs))
+	var containers, rest []engine.Ref
+	for _, ref := range refs {
+		switch {
+		case IsFluxRef(ref):
+			flux = append(flux, ref)
+		case r.Expandable(ref):
+			containers = append(containers, ref)
+		default:
+			rest = append(rest, ref)
+		}
+	}
+	return append(append(flux, containers...), rest...)
+}
+
 // ResolveFunc adapts the registry to the engine's ResolveFunc, binding the
 // resolve context. A reference with no matching resolver and no domain fallback
 // is surfaced as a resolve error (which the engine turns into an Error node).
@@ -68,6 +109,35 @@ func (r *Registry) ResolveFunc(ctx context.Context, rc *ResolveContext) engine.R
 		if res == nil {
 			return engine.Result{}, fmt.Errorf("no resolver for domain %q type %q", ref.Domain, ref.Type)
 		}
-		return res.Resolve(ctx, rc, ref)
+		result, err := res.Resolve(ctx, rc, ref)
+		if err != nil {
+			return engine.Result{}, err
+		}
+		result.Children = withoutDependencies(r.OrderChildren(result.Children), result.Dependencies)
+		result.Expandable = res.Expandable(ref)
+		return result, nil
 	}
+}
+
+// withoutDependencies removes from children any reference already declared as a
+// dependency. An object can genuinely be both — a Flux Kustomization routinely
+// applies the very GitRepository it reconciles from — but listing it under both
+// headings states the same fact twice. The dependency grouping wins, because
+// that is where the reference explains something about its parent.
+func withoutDependencies(children, deps []engine.Ref) []engine.Ref {
+	if len(children) == 0 || len(deps) == 0 {
+		return children
+	}
+	declared := make(map[string]struct{}, len(deps))
+	for _, d := range deps {
+		declared[d.Key()] = struct{}{}
+	}
+	kept := children[:0:0]
+	for _, c := range children {
+		if _, dup := declared[c.Key()]; dup {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept
 }

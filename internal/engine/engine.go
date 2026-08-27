@@ -18,6 +18,7 @@ func Traverse(root Ref, resolve ResolveFunc) *Node {
 
 	rootNode, rootChildren := resolveNode(root, resolve)
 	visited[root.Key()] = rootNode
+	resolveDependencies(rootNode, resolve)
 
 	type frame struct {
 		parent *Node
@@ -34,16 +35,18 @@ func Traverse(root Ref, resolve ResolveFunc) *Node {
 				// Already expanded elsewhere: attach a leaf pointer carrying the
 				// prior health, but do not re-expand (cycle/diamond safety).
 				f.parent.Children = append(f.parent.Children, &Node{
-					Ref:     ref,
-					Health:  prior.Health,
-					Detail:  prior.Detail,
-					Visited: true,
+					Ref:        ref,
+					Health:     prior.Health,
+					Detail:     prior.Detail,
+					Expandable: prior.Expandable,
+					Visited:    true,
 				})
 				continue
 			}
 
 			childNode, grandChildren := resolveNode(ref, resolve)
 			visited[ref.Key()] = childNode
+			resolveDependencies(childNode, resolve)
 			f.parent.Children = append(f.parent.Children, childNode)
 
 			if len(grandChildren) > 0 {
@@ -55,6 +58,26 @@ func Traverse(root Ref, resolve ResolveFunc) *Node {
 	return rootNode
 }
 
+// resolveDependencies resolves each of node's declared dependencies one level
+// deep and attaches them. Their own children are deliberately discarded: a
+// dependency answers "what does this need?", not "what is under it", and
+// descending would splice whole subtrees into the tree.
+//
+// Dependencies are also kept out of the caller's visited map on purpose. Marking
+// one visited would cause a later, genuine child occurrence of the same
+// reference to be attached as an already-visited pointer and lose its subtree.
+func resolveDependencies(node *Node, resolve ResolveFunc) {
+	if node == nil || len(node.deps) == 0 {
+		return
+	}
+	for _, ref := range node.deps {
+		depNode, _ := resolveNode(ref, resolve)
+		depNode.Dependency = true
+		node.Dependencies = append(node.Dependencies, depNode)
+	}
+	node.deps = nil
+}
+
 // resolveNode resolves a single reference into a Node plus the child references
 // to enqueue. A resolve error yields an Error node with no children.
 func resolveNode(ref Ref, resolve ResolveFunc) (*Node, []Ref) {
@@ -63,10 +86,12 @@ func resolveNode(ref Ref, resolve ResolveFunc) (*Node, []Ref) {
 		return &Node{Ref: ref, Health: Error, Err: err.Error()}, nil
 	}
 	return &Node{
-		Ref:       ref,
-		Health:    res.Health,
-		Detail:    res.Detail,
-		Freshness: res.Freshness,
-		Fields:    res.Fields,
+		Ref:        ref,
+		Health:     res.Health,
+		Detail:     res.Detail,
+		Freshness:  res.Freshness,
+		Fields:     res.Fields,
+		Expandable: res.Expandable,
+		deps:       res.Dependencies,
 	}, res.Children
 }

@@ -42,6 +42,11 @@ type Resolver interface {
 	Matches(ref engine.Ref) bool
 	// Resolve retrieves and interprets the reference.
 	Resolve(ctx context.Context, rc *ResolveContext, ref engine.Ref) (engine.Result, error)
+	// Expandable reports whether the reference can descend to a child layer.
+	// It MUST answer from the reference alone: no retrieval, no resolve context,
+	// no error. It describes the reference's *type*, not the instance, so an
+	// expandable reference may still resolve to zero children.
+	Expandable(ref engine.Ref) bool
 }
 
 // K8sRef builds a Kubernetes-domain reference. Type encodes apiVersion and kind;
@@ -70,6 +75,27 @@ func DecodeK8sRef(ref engine.Ref) (apiVersion, kind, namespace, name string, err
 		return "", "", "", "", fmt.Errorf("malformed kubernetes type %q (want apiVersion|Kind)", ref.Type)
 	}
 	return parts[0], parts[1], ref.Coords["namespace"], ref.Coords["name"], nil
+}
+
+// fluxGroupSuffix is the common suffix of every Flux API group
+// (source/kustomize/helm/image/notification .toolkit.fluxcd.io).
+const fluxGroupSuffix = "toolkit.fluxcd.io"
+
+// IsFluxRef reports whether ref designates a Flux object, i.e. one whose API
+// group is exactly fluxGroupSuffix or a subdomain of it. The dot-boundary check
+// keeps lookalike groups (e.g. "nottoolkit.fluxcd.io") out.
+//
+// The test lives here rather than behind a resolver method on purpose: a
+// GitRepository is claimed by the generic fallback, whose whole point is to know
+// nothing about any particular ecosystem, and the notification kinds land there
+// too. See the change design for the rejected Priority() alternative.
+func IsFluxRef(ref engine.Ref) bool {
+	apiVersion, _, _, _, err := DecodeK8sRef(ref)
+	if err != nil {
+		return false
+	}
+	group, _, _ := strings.Cut(apiVersion, "/")
+	return group == fluxGroupSuffix || strings.HasSuffix(group, "."+fluxGroupSuffix)
 }
 
 // GetK8s fetches the object referenced by a Kubernetes-domain reference.
