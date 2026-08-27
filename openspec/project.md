@@ -2,7 +2,7 @@
 
 ## What this is
 
-`fluxexp` is a CLI (and, later, an embedded web UI) that **traverses the full
+`fluxexp` is a CLI plus an embedded web UI that **traverses the full
 dependency graph of resources reconciled by FluxCD**, from a starting Flux
 object all the way down to the concrete cloud resource it ultimately produces.
 
@@ -42,11 +42,11 @@ the engine.
 
 ## Tech stack
 
-- **Language**: Go (1.24). Native to the k8s/Flux ecosystem: `client-go`,
+- **Language**: Go (see `go.mod` for the pinned version). Native to the k8s/Flux ecosystem: `client-go`,
   `controller-runtime`, and the Flux API types are all Go.
 - **CLI**: single static binary. Tree/text output first.
-- **UI (later)**: a web app served by the same binary (embedded frontend) to
-  visualize the resource graph. Not in scope for the first increments.
+- **UI**: a web app served by the same binary (embedded frontend, `//go:embed`)
+  that visualizes the resource graph. Shipped in I3 and extended since.
 - **Cluster access**: standard kubeconfig; dynamic client for arbitrary CRDs.
 
 ## Architectural principles
@@ -56,9 +56,14 @@ the engine.
    given a reference, ask the registry for a resolver, get health + children,
    recurse. Backend-specific logic never leaks into the engine.
 2. **Resolvers own retrieval and are selected by matcher.** A resolver declares
-   which references it handles via a predicate, fetches its own object through
-   shared clients, and may emit children in another domain. A per-domain generic
-   fallback handles unknown types (e.g. the Kubernetes fallback reports `Ready`).
+   which references it handles via a predicate, whether they can descend, fetches
+   its own object through shared clients, and may emit children in another
+   domain. A per-domain generic fallback handles unknown types (e.g. the
+   Kubernetes fallback reports `Ready`).
+6. **Two edge classes.** A node's *children* are what it produces and are
+   traversed recursively; its *dependencies* are what it needs to reconcile,
+   resolved one level deep and never descended into. Without that asymmetry a
+   `dependsOn` chain would splice whole inventories into one tree.
 3. **Discovery is read-only.** Traversal never mutates cluster state. Triggering
    a reconcile is a separate, explicit action (later increment).
 4. **Cycle-safe.** The engine tracks visited (GVK, namespace, name) to avoid
@@ -67,20 +72,23 @@ the engine.
    whose resolver errors is rendered as an error node; traversal of siblings
    continues.
 
-## Increment roadmap (rough)
+## Increment roadmap
 
-- **I1 (current)**: traversal engine + Kustomization resolver (reads
-  `.status.inventory`) + generic fallback resolver. CLI tree output. No UI.
-- I2: HelmRelease resolver (Helm release storage).
-- I3: operator-CRD leaf resolver + Ready aggregation.
-- I4: GCP verification (Config Connector self-link → cloud API).
-- I5: web UI.
+**This section is not the source of truth.** See `README.md` for the shipped
+increments (I1–I7 done) and `openspec/changes/archive/` for what each one
+actually contained. The roadmap that used to live here drifted out of date and
+was removed rather than maintained in two places.
+
+Currently unclaimed: generalizing owner-descent to operator CRDs, and cloud
+verification (e.g. GCP via a `gcp`-domain resolver).
 
 ## Conventions
 
-- Go module path: TBD at first `apply` (e.g. `github.com/<org>/fluxexp`).
-- Package layout (proposed): `cmd/fluxexp` (CLI entry), `internal/engine`
-  (traversal), `internal/resolver` (registry + resolvers), `internal/k8s`
-  (client wiring).
+- Go module path: `github.com/maknihamdi/fluxexp`.
+- Package layout: `cmd/fluxexp` (CLI entry), `internal/engine` (traversal),
+  `internal/resolver` (registry + resolvers), `internal/k8s` (client wiring),
+  `internal/render` (text output), `internal/ui` (portal + embedded frontend).
+- See `CLAUDE.md` for the architecture as built, its invariants, and the
+  performance gotcha around the client-go rate limiter.
 - Tests: table-driven, using fake dynamic client / recorded fixtures so the
   engine and resolvers are testable without a live cluster.

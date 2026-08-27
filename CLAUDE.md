@@ -43,22 +43,48 @@ means registering a new resolver, and nothing else changes.**
 Helm and performs **no backend I/O**. `Traverse(root Ref, resolve ResolveFunc) *Node` does a
 BFS: it dedupes by `Ref.Key()` (cycle/diamond safe — a repeat is attached as a `Visited: true`
 leaf pointer) and turns any resolve error into an `Error` node while siblings keep going.
-`Ref` is `{Domain, Type, Coords, Display}`; `Health` and `Freshness` are opaque strings the
-engine only carries, never computes. Adding backend knowledge to this package is a design
-violation.
+`Ref` is `{Domain, Type, Coords, Display}`; `Health`, `Freshness` and `Expandable` are opaque
+values the engine only carries, never computes. Adding backend knowledge to this package is a
+design violation.
+
+A node has **two kinds of outgoing edge**. `Children` are what it produces and are traversed
+recursively. `Dependencies` are what it requires to reconcile: resolved **one level deep**,
+never descended into, and deliberately kept **out of the `visited` map** — marking one visited
+would make a later genuine child occurrence of the same reference collapse to an
+already-visited pointer and lose its subtree. That asymmetry is what makes a Kustomization's
+`dependsOn` safe to show: descending would splice whole inventories into the tree.
 
 **`internal/resolver`** — the resolver contract, the matcher-based `Registry`, and the
-concrete resolvers. A `Resolver` declares `Matches(ref)`, fetches its **own** object through
-the shared clients in `ResolveContext`, and returns health + child refs (children may be in a
-different domain). `Registry.For` tries specific resolvers in registration order, then the
-per-domain fallback. **`NewDefaultRegistry()` is the single wiring point shared by the CLI and
-the UI** — register new resolvers there so both surfaces behave identically.
+concrete resolvers. A `Resolver` declares `Matches(ref)` and `Expandable(ref)` — the latter
+answered from the reference alone, no fetch, no error — fetches its **own** object through the
+shared clients in `ResolveContext`, and returns health plus child and dependency refs (either
+may be in a different domain). `Registry.For` tries specific resolvers in registration order,
+then the per-domain fallback. **`NewDefaultRegistry()` is the single wiring point shared by the
+CLI and the UI** — register new resolvers there so both surfaces behave identically.
 
-Current resolvers: `KustomizationResolver` (children from `.status.inventory.entries`, plus
-reconciliation freshness), `HelmReleaseResolver` (children from the gzip+base64 Helm release
-storage Secret `sh.helm.release.v1.<name>.v<n>`), `WorkloadResolver` (real health from replica
-counts / phase / conditions, and descent via `ownerReferences`: Deployment → active ReplicaSet
-→ Pods), `GenericK8sResolver` (domain fallback: `Ready` condition, no children).
+**`Registry.ResolveFunc` is the single entry point both surfaces resolve through.** It applies
+the rules that must not diverge: three-tier child ordering (`OrderChildren`: Flux objects, then
+other expandable refs, then the rest — stable within each tier), removal of children that merely
+repeat a declared dependency, and the `Expandable` flag. The UI used to call `Resolve` directly
+and re-apply ordering itself; that duplication is exactly how the two surfaces drifted. Do not
+reintroduce it.
+
+Current resolvers: `KustomizationResolver` (children from `.status.inventory.entries`;
+dependencies from `spec.sourceRef` + `spec.dependsOn`; reconciliation freshness),
+`HelmReleaseResolver` (children from the gzip+base64 Helm release storage Secret
+`sh.helm.release.v1.<name>.v<n>`), `WorkloadResolver` (health from replica counts / phase /
+conditions, descent via `ownerReferences`: Deployment → active ReplicaSet → Pods),
+`FluxObjectResolver` (the `source.` and `image.toolkit.fluxcd.io` kinds — leaves, but they
+surface repository / tracked ref / interval / scanned image / selected tag),
+`GenericK8sResolver` (domain fallback: `Ready` condition, no children).
+
+Two helpers exist so a surface holding an object can read more from it **without a second
+call**: `FieldsForFetched(ref, obj)` and `DependencyRefsForFetched(ref, obj)`. A Kustomization's
+`sourceRef` and `dependsOn` are in its own manifest, so a listed row never needs to be resolved
+— and its inventory never needs computing — just to show its dependency group. `IsFluxRef`
+answers the Flux-group question for ordering; it lives in the ordering helper rather than on the
+`Resolver` interface, because the generic fallback (which handles GitRepository) must stay
+ignorant of any particular ecosystem.
 
 Kubernetes-specific reference encoding lives here, not in `internal/k8s`: `K8sRef` /
 `DecodeK8sRef` encode `Type` as `"<apiVersion>|<Kind>"` and `Coords` as `namespace`/`name`.
@@ -70,9 +96,17 @@ interface resolvers depend on) and `ListContexts` for the UI. It knows nothing a
 **`internal/render`** — pure functions from `*engine.Node` / rows to text (tree, list). No I/O.
 
 **`internal/ui`** — `Service` + `Handler` serving `/api/contexts`, `/api/roots`, `/api/expand`
-and an `//go:embed web/*` single-page app. It reuses the same registry, but expands **one hop
-per call**: `Expand` runs the node's full resolver and then computes only a *cheap* health for
-each child (fetch + `Ready`) rather than recursing. It caches one client per kube context.
+and an `//go:embed web/*` single-page app. It resolves through `Registry.ResolveFunc` and
+expands **one hop per call**: each listed entry gets a single fetch (health, fields, and its
+dependency refs), never a full resolve. It caches one client per kube context, wraps each
+request in a `memoGetter` (one layer asks for the same shared source many times; the memo lives
+for **one request only**, because caching across requests would serve stale health), and
+resolves a layer's entries concurrently through a bounded pool (`layerConcurrency`).
+
+`dropNestedDuplicates` enforces, in the UI only, that a layer shows each reference once: a row
+already displayed as another entry's nested dependency is dropped, unless it carries its own
+dependency group (so mutual references cannot erase both). It is UI-only on purpose — in the CLI
+a top-level row carries its whole subtree, so dropping it would lose information.
 
 **`cmd/fluxexp`** — cobra command tree (`list`, `traverse`, `ui`). `traverse` exits non-zero
 only when the *root* fails to resolve; deeper failures are rendered inline as error nodes.
@@ -85,7 +119,29 @@ only when the *root* fails to resolve; deeper failures are rendered inline as er
   `KustomizationFreshness`) and is shared by the CLI, the `list` command, and the UI — don't
   reimplement Ready-condition logic at a call site.
 - `Freshness` (up-to-date / behind / failed / suspended) is a status **distinct from health**,
-  set only by resolvers that can compute it; empty means "not applicable".
+  set only by resolvers that can compute it; empty means "not applicable". Precedence:
+  suspended > failed > up-to-date > behind. It is never claimed for a listed entry, because
+  computing it without that entry's source could wrongly report "up-to-date" for something
+  behind.
+- **Expandability is a hint about a type, not a measurement of an instance.** A Deployment
+  scaled to zero is marked expandable and opens empty; that is specified behaviour, not a bug.
+- **Dependencies are shown, never descended into**, and a reference appears **once**: a declared
+  dependency is dropped from its own node's children (Flux bootstrap applies the GitRepository
+  it reconciles from), and in the UI from the surrounding layer too.
+- Anything derivable from an object already fetched must not trigger a second call — that is
+  what the `*ForFetched` helpers are for. Resolving every row to learn something about it is the
+  probing cost this design exists to avoid: a HelmRelease resolve gunzips a storage Secret.
+
+### Performance gotcha
+
+`k8s.LoadClient` raises `cfg.QPS`/`cfg.Burst` to 50/100. client-go defaults to **5 QPS / burst
+10**, sized for a controller reconciling in the background, and that default alone turned a
+67-entry UI layer into a 25s wait. Parallelising changed nothing until the limiter was raised
+(25s → 12s with the per-request memo → ~1.2s). If a layer ever feels slow again, check the
+limiter before rewriting the scheduling.
+
+The recursive CLI `traverse` of a whole cluster root is still ~79s: the engine is sequential,
+unlike the UI. Known, not addressed.
 
 ### Tests
 
