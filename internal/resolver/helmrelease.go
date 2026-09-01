@@ -47,11 +47,15 @@ func (HelmReleaseResolver) Resolve(ctx context.Context, rc *ResolveContext, ref 
 	}
 
 	health, detail := K8sHealth(obj)
+	// Read from the manifest already in hand, so the same references reach a
+	// listed row (which never resolves) and the engine.
+	deps := DependencyRefsForFetched(ref, obj)
 
 	name, namespace, version, ok := newestHistory(obj)
 	if !ok {
-		// Release not stored yet: report health, no children.
-		return engine.Result{Health: health, Detail: detail}, nil
+		// Release not stored yet: report health and what it needs, no children.
+		// A release that never installed is usually waiting on one of them.
+		return engine.Result{Health: health, Detail: detail, Dependencies: deps}, nil
 	}
 
 	secretName := fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, version)
@@ -78,7 +82,30 @@ func (HelmReleaseResolver) Resolve(ctx context.Context, rc *ResolveContext, ref 
 	if rel.Info.Status != "" {
 		detail = "release " + rel.Info.Status
 	}
-	return engine.Result{Health: health, Detail: detail, Children: children}, nil
+	return engine.Result{Health: health, Detail: detail, Dependencies: deps, Children: children}, nil
+}
+
+// helmReleaseDependencies lists what the HelmRelease needs in order to
+// reconcile: the source it pulls its chart from, then its spec.dependsOn entries
+// in declaration order — the same rule a Kustomization follows.
+func helmReleaseDependencies(hr *unstructured.Unstructured, apiVersion, ns string) []engine.Ref {
+	var deps []engine.Ref
+	if src, ok := helmReleaseSourceRef(hr, ns); ok {
+		deps = append(deps, src)
+	}
+	return append(deps, dependsOnRefs(hr, apiVersion, "HelmRelease", ns)...)
+}
+
+// helmReleaseSourceRef builds the reference to the source the chart comes from.
+// spec.chartRef wins over spec.chart.spec.sourceRef: the v2 API treats the two
+// as mutually exclusive, and chartRef names the artifact directly. A HelmRelease
+// declaring neither has no source — an invalid object yields an empty group, not
+// a failure. The second result is false in that case.
+func helmReleaseSourceRef(hr *unstructured.Unstructured, ns string) (engine.Ref, bool) {
+	if ref, ok := sourceRefAt(hr, ns, "spec", "chartRef"); ok {
+		return ref, true
+	}
+	return sourceRefAt(hr, ns, "spec", "chart", "spec", "sourceRef")
 }
 
 // helmRelease is the minimal shape we need from the decoded release JSON.

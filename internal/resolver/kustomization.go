@@ -76,26 +76,6 @@ func (KustomizationResolver) Resolve(ctx context.Context, rc *ResolveContext, re
 	}, nil
 }
 
-// DependencyRefsForFetched returns the references an already-fetched object
-// declares as dependencies, read straight from its own manifest. It performs no
-// retrieval, never errors, and never computes the object's children — a
-// Kustomization's spec.sourceRef and spec.dependsOn are right there in the YAML
-// a caller already holds.
-//
-// It is the single source of these references: KustomizationResolver.Resolve
-// calls it too, so what the engine traverses and what a listed row shows cannot
-// drift apart. Kinds that declare no dependencies yield nothing.
-func DependencyRefsForFetched(ref engine.Ref, obj *unstructured.Unstructured) []engine.Ref {
-	if obj == nil {
-		return nil
-	}
-	apiVersion, kind, ns, _, err := DecodeK8sRef(ref)
-	if err != nil || kind != "Kustomization" || groupOf(apiVersion) != kustomizationGroup {
-		return nil
-	}
-	return kustomizationDependencies(obj, ns)
-}
-
 // kustomizationDependencies lists what the Kustomization needs in order to
 // reconcile: its source first, then its spec.dependsOn entries in declaration
 // order.
@@ -110,42 +90,14 @@ func kustomizationDependencies(ks *unstructured.Unstructured, ns string) []engin
 	if srcRef, ok := kustomizationSourceRef(ks, ns); ok {
 		deps = append(deps, srcRef)
 	}
-	entries, found, _ := unstructured.NestedSlice(ks.Object, "spec", "dependsOn")
-	if !found {
-		return deps
-	}
-	for _, e := range entries {
-		entry, ok := e.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		name, _ := entry["name"].(string)
-		if name == "" {
-			continue
-		}
-		depNS, _ := entry["namespace"].(string)
-		if depNS == "" {
-			depNS = ns
-		}
-		deps = append(deps, K8sRef(kustomizationAPIVersion, "Kustomization", depNS, name))
-	}
-	return deps
+	return append(deps, dependsOnRefs(ks, kustomizationAPIVersion, "Kustomization", ns)...)
 }
 
 // kustomizationSourceRef builds the reference to the Kustomization's source
 // (spec.sourceRef), defaulting the namespace to the Kustomization's own. The
 // second result is false when no source is configured.
 func kustomizationSourceRef(ks *unstructured.Unstructured, ns string) (engine.Ref, bool) {
-	kind, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "kind")
-	name, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "name")
-	if kind == "" || name == "" {
-		return engine.Ref{}, false
-	}
-	srcNS, _, _ := unstructured.NestedString(ks.Object, "spec", "sourceRef", "namespace")
-	if srcNS == "" {
-		srcNS = ns
-	}
-	return K8sRef(sourceAPIVersion, kind, srcNS, name), true
+	return sourceRefAt(ks, ns, "spec", "sourceRef")
 }
 
 // fetchKustomizationSource fetches the Kustomization's source object

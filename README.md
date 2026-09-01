@@ -96,6 +96,12 @@ dependencies nested inside it, and what it applies listed below.
   (`/?context=<ctx>&p=<type>:<ns>:<name>~…`), so any node can be reloaded,
   bookmarked and shared; browser Back/Forward walk the trail instead of leaving
   the app, and the breadcrumb gains an up-to-parent control.
+- **I9 (done)**: HelmRelease dependencies — a HelmRelease is grouped with what it
+  needs, like a Kustomization: the source its chart comes from (`spec.chartRef`,
+  else `spec.chart.spec.sourceRef`) then its `spec.dependsOn` entries. A *listed*
+  HelmRelease shows that group without being resolved, so no Helm storage Secret
+  is read to draw a row. A `chartRef`-style release continues one hop — release →
+  HelmChart → HelmRepository — and the HelmChart gains the fields it never had.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 
