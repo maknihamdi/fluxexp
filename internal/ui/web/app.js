@@ -2,17 +2,37 @@
 
 // The URL is the source of truth for where the user is: state.trail is a
 // projection of it, written by every navigation and re-read on popstate, so a
-// shared link and a Back press land in exactly the same view.
+// shared link and a Back press land in exactly the same view. Expanding a branch
+// in the tree is not a navigation and never touches the URL.
 const state = {
   context: "",
-  trail: [], // array of ref DTOs (drill path); empty => home
+  trail: [], // array of ref DTOs (path to the selected node); empty => roots level
 };
 
 const DOMAIN_K8S = "kubernetes";
+const HEALTHS = ["healthy", "pending", "unhealthy", "unknown", "error"];
+
+// tree holds what has been fetched: one entry per expanded reference, each
+// carrying the layer it returned and when it was read. Nothing here is ever
+// rendered as current without its age beside it, and collapsing discards.
+const tree = {
+  roots: null,          // RootDTO[] for the roots level
+  rootsAt: 0,
+  nodes: new Map(),     // refKey -> { node: NodeDTO, at: ms }
+  open: new Set(),      // refKeys whose children are revealed
+  loading: new Set(),   // refKeys being fetched
+};
+
+const filter = { q: "", hidden: new Set() };
+
+// detail holds the selected node's own resolution. It is never taken from the
+// tree: selecting always re-resolves, so what the node pane shows was read when
+// it was shown.
+const detail = { node: null, at: 0, seq: 0 };
 
 const el = (sel) => document.querySelector(sel);
 const viewEl = () => el("#view");
-const crumbEl = () => el("#breadcrumb");
+const treeEl = () => el("#tree");
 
 async function api(path) {
   const res = await fetch(path);
@@ -26,73 +46,6 @@ function toast(msg) {
   t.textContent = msg;
   t.hidden = false;
   setTimeout(() => (t.hidden = true), 4000);
-}
-
-function badge(health) {
-  const h = (health || "unknown").toLowerCase();
-  const b = document.createElement("span");
-  b.className = `badge ${h}`;
-  b.innerHTML = `<span class="dot"></span>${h}`;
-  return b;
-}
-
-// freshnessBadge returns a badge for a freshness value, or null when empty.
-function freshnessBadge(freshness) {
-  if (!freshness) return null;
-  const b = document.createElement("span");
-  b.className = `badge fresh ${freshness}`;
-  b.innerHTML = `<span class="dot"></span>${freshness}`;
-  return b;
-}
-
-// inlineFields renders fields compactly on a single row, for list entries.
-function inlineFields(fields) {
-  const wrap = document.createElement("div");
-  wrap.className = "detail inline-fields";
-  for (const f of fields) {
-    const l = document.createElement("span");
-    l.className = "iflabel";
-    l.textContent = f.label.toLowerCase();
-    const v = document.createElement("span");
-    v.className = "ifvalue";
-    v.textContent = f.value;
-    if (f.full) v.title = f.full;
-    wrap.appendChild(l);
-    wrap.appendChild(v);
-  }
-  return wrap;
-}
-
-// fieldsPanel renders label/value fields; the full value (if any) is the title.
-function fieldsPanel(fields) {
-  const wrap = document.createElement("div");
-  wrap.className = "fields";
-  for (const f of fields || []) {
-    const row = document.createElement("div");
-    row.className = "field";
-    const l = document.createElement("span");
-    l.className = "flabel";
-    l.textContent = f.label;
-    const v = document.createElement("span");
-    v.className = "fvalue";
-    v.textContent = f.value;
-    if (f.full) v.title = f.full;
-    row.appendChild(l);
-    row.appendChild(v);
-    wrap.appendChild(row);
-  }
-  return wrap;
-}
-
-function expandQuery(ref) {
-  const p = new URLSearchParams({
-    context: state.context,
-    domain: ref.domain || "kubernetes",
-    type: ref.type || "",
-    ns: ref.namespace || "",
-    name: ref.name || "",
-  });
-  return `/api/expand?${p.toString()}`;
 }
 
 // ---- refs and URLs --------------------------------------------------------
@@ -111,6 +64,15 @@ function labelFor(ref) {
 }
 
 const refLabel = (ref) => (ref && ref.display) || labelFor(ref);
+const kindOf = (ref) => {
+  const typ = (ref && ref.type) || "";
+  const i = typ.lastIndexOf("|");
+  return i >= 0 ? typ.slice(i + 1) : typ;
+};
+const nameOf = (ref) => (ref && ref.namespace ? `${ref.namespace}/${ref.name}` : (ref && ref.name) || "");
+const refKey = (ref) =>
+  `${ref.domain || DOMAIN_K8S}|${ref.type || ""}|${ref.namespace || ""}|${ref.name || ""}`;
+const sameRef = (a, b) => a && b && refKey(a) === refKey(b);
 
 // encodeComponent escapes a hop component on its own — so a separator inside a
 // name can never break parsing — then restores "/" and "|", which are legal in a
@@ -171,6 +133,610 @@ function rawParam(name) {
   return null;
 }
 
+function expandQuery(ref) {
+  const p = new URLSearchParams({
+    context: state.context,
+    domain: ref.domain || DOMAIN_K8S,
+    type: ref.type || "",
+    ns: ref.namespace || "",
+    name: ref.name || "",
+  });
+  return `/api/expand?${p.toString()}`;
+}
+
+// ---- small builders -------------------------------------------------------
+
+const elm = (tag, cls, txt) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt != null) e.textContent = txt;
+  return e;
+};
+
+// mark renders health as a shape as well as a colour, so the five values stay
+// apart for a colour-blind reader and in a greyscale screenshot. An empty health
+// is a reference not read yet, which is not the same as "unknown".
+function mark(health) {
+  const h = (health || "").toLowerCase();
+  const m = elm("span", `mk ${h || "unread"}`);
+  m.title = h || "not read yet";
+  return m;
+}
+
+function ageText(at) {
+  if (!at) return "";
+  const s = Math.round((Date.now() - at) / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")} ago`;
+}
+
+// ageEl is re-read by tickAges, so an age on screen never silently freezes.
+function ageEl(at) {
+  const e = elm("span", "age", ageText(at));
+  e.dataset.at = String(at);
+  return e;
+}
+
+function tickAges() {
+  for (const e of document.querySelectorAll(".age[data-at]")) {
+    e.textContent = ageText(Number(e.dataset.at));
+  }
+}
+
+// clickable makes a row activate like a button while staying a <div>: a row holds
+// its own controls (expand, re-read, new exploration), and a <button> may not
+// contain buttons.
+function clickable(e, onClick) {
+  e.setAttribute("role", "button");
+  e.tabIndex = 0;
+  e.onclick = onClick;
+  e.onkeydown = (ev) => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    ev.preventDefault();
+    onClick();
+  };
+  return e;
+}
+
+function rereadButton(title, onClick) {
+  const b = elm("button", "reread", "↻");
+  b.type = "button";
+  b.title = title;
+  b.onclick = (ev) => { ev.stopPropagation(); onClick(); };
+  return b;
+}
+
+function newExpButton(ref) {
+  const b = elm("button", "newexp", "↗");
+  b.type = "button";
+  b.title = "Open a new exploration from here";
+  b.onclick = (ev) => { ev.stopPropagation(); newExploration(ref); };
+  return b;
+}
+
+// tallyOf counts health values over a layer, for the summary line and the bar.
+function tallyOf(entries) {
+  const counts = {};
+  for (const e of entries) counts[e.health || "unknown"] = (counts[e.health || "unknown"] || 0) + 1;
+  return counts;
+}
+
+function layerSummary(entries) {
+  const counts = tallyOf(entries);
+  const tally = elm("div", "tally");
+  for (const h of HEALTHS) {
+    if (!counts[h]) continue;
+    const s = elm("span");
+    s.appendChild(mark(h));
+    s.appendChild(document.createTextNode(`${counts[h]} ${h}`));
+    tally.appendChild(s);
+  }
+  const bar = elm("div", "bar");
+  for (const h of HEALTHS) {
+    if (!counts[h]) continue;
+    const seg = elm("i", h);
+    seg.style.flex = String(counts[h]);
+    bar.appendChild(seg);
+  }
+  return { tally, bar };
+}
+
+// ---- filter ---------------------------------------------------------------
+
+// matches answers for one entry alone. A branch is kept when it matches or when
+// something under it does — filtering must never hide the path to a match.
+function matches(entry) {
+  if (filter.hidden.has(entry.health || "unknown")) return false;
+  if (!filter.q) return true;
+  const ref = entry.ref || {};
+  return `${kindOf(ref)} ${ref.namespace || ""} ${ref.name || ""}`.toLowerCase().includes(filter.q);
+}
+
+// branchMatches descends into what is held. `seen` carries the keys already on
+// this path: the Flux bootstrap Kustomization applies itself, so a graph walk
+// without that guard never terminates.
+function branchMatches(entry, seen) {
+  if (matches(entry)) return true;
+  const key = refKey(entry.ref);
+  if (seen.has(key)) return false;
+  const held = tree.nodes.get(key);
+  if (!held) return false;
+  const next = new Set(seen).add(key);
+  return (held.node.children || []).some((c) => branchMatches(c, next));
+}
+
+const filtered = (entries, seen) => entries.filter((e) => branchMatches(e, seen || new Set()));
+
+function buildHealthFilter() {
+  const box = el("#hfilter");
+  for (const h of ["healthy", "pending", "unhealthy"]) {
+    const b = elm("button", "hf");
+    b.type = "button";
+    b.setAttribute("aria-pressed", "true");
+    b.appendChild(mark(h));
+    b.appendChild(document.createTextNode(h));
+    b.onclick = () => {
+      if (filter.hidden.has(h)) filter.hidden.delete(h); else filter.hidden.add(h);
+      b.setAttribute("aria-pressed", String(!filter.hidden.has(h)));
+      renderTree();
+      renderDetailBody();
+    };
+    box.appendChild(b);
+  }
+}
+
+// ---- fetching -------------------------------------------------------------
+
+// loadBranch resolves one reference and holds its layer. Every call is a fresh
+// read: nothing here is served from what is already held.
+async function loadBranch(ref) {
+  const key = refKey(ref);
+  tree.loading.add(key);
+  renderTree();
+  try {
+    const node = await api(expandQuery(ref));
+    tree.nodes.set(key, { node, at: Date.now() });
+  } catch (e) {
+    tree.open.delete(key);
+    toast(e.message);
+  } finally {
+    tree.loading.delete(key);
+    renderTree();
+  }
+}
+
+async function loadRoots() {
+  const { roots } = await api(`/api/roots?context=${encodeURIComponent(state.context)}`);
+  tree.roots = roots;
+  tree.rootsAt = Date.now();
+}
+
+function resetTree() {
+  tree.roots = null;
+  tree.rootsAt = 0;
+  tree.nodes.clear();
+  tree.open.clear();
+  tree.loading.clear();
+}
+
+// ---- tree pane ------------------------------------------------------------
+
+function renderTree() {
+  const t = treeEl();
+  t.innerHTML = "";
+
+  const head = elm("div", "tgroup-label");
+  head.appendChild(document.createTextNode("root kustomizations · ns flux"));
+  if (tree.rootsAt) {
+    head.appendChild(ageEl(tree.rootsAt));
+    head.appendChild(rereadButton("Re-read the root Kustomizations", refreshRoots));
+  }
+  t.appendChild(head);
+
+  if (tree.roots === null) {
+    t.appendChild(elm("div", "tloading", "loading…"));
+    return;
+  }
+  const roots = filtered(tree.roots);
+  if (!roots.length) {
+    t.appendChild(elm("div", "tloading", tree.roots.length ? "nothing matches the filter" : "no root Kustomizations"));
+  }
+  for (const r of roots) t.appendChild(treeBranch(r, [r.ref], 0, new Set()));
+
+  // A trail that does not start at a root — a new exploration opened from any
+  // reference — still gets its spine, so the path is visible rather than absent.
+  if (state.trail.length && !tree.roots.some((r) => sameRef(r.ref, state.trail[0]))) {
+    t.appendChild(elm("div", "tgroup-label", "exploration"));
+    t.appendChild(treeBranch({ ref: state.trail[0] }, [state.trail[0]], 0, new Set()));
+  }
+}
+
+// treeBranch renders one row plus, when open, the layer it holds. `entry` is what
+// the parent layer said about the reference; a fresher read of the reference
+// itself wins over it.
+function treeBranch(entry, path, depth, seen) {
+  const frag = document.createDocumentFragment();
+  const ref = entry.ref;
+  const key = refKey(ref);
+  // A reference already on this path is a repeat — the Flux bootstrap
+  // Kustomization applies itself. It is shown as a leaf pointer, like the
+  // engine's visited node, rather than descended into again.
+  const repeat = seen.has(key);
+  const held = repeat ? null : tree.nodes.get(key);
+  const node = held ? held.node : entry;
+  const children = held ? (held.node.children || []) : [];
+  const spine = !held && !repeat && isTrailPrefix(path) ? state.trail[path.length] : null;
+  const canOpen = !repeat && node.expandable !== false;
+
+  const row = elm("div", "trow" + (canOpen ? " container" : ""));
+  row.style.paddingLeft = `${0.5 + depth * 0.9}rem`;
+  if (sameRef(ref, state.trail[state.trail.length - 1])) row.setAttribute("aria-current", "true");
+
+  const twist = elm("button", "twist" + (canOpen ? "" : " leaf"), "▶");
+  twist.type = "button";
+  twist.setAttribute("aria-expanded", String(tree.open.has(key)));
+  twist.setAttribute("aria-label", `${tree.open.has(key) ? "Collapse" : "Expand"} ${refLabel(ref)}`);
+  twist.onclick = (ev) => { ev.stopPropagation(); toggleBranch(ref); };
+  row.appendChild(twist);
+  row.appendChild(mark(node.health));
+
+  const name = elm("span", "tname");
+  name.appendChild(elm("em", null, kindOf(ref)));
+  name.appendChild(document.createTextNode(nameOf(ref)));
+  if (repeat) {
+    name.appendChild(elm("span", "tcount", " ↩"));
+    name.title = "Already shown higher on this path";
+  }
+  row.appendChild(name);
+
+  const meta = elm("div", "tmeta");
+  if (held) {
+    meta.appendChild(elm("span", "tcount", String(children.length)));
+    meta.appendChild(ageEl(held.at));
+    meta.appendChild(rereadButton(`Re-read ${refLabel(ref)}`, () => loadBranch(ref)));
+  }
+  row.appendChild(meta);
+  clickable(row, () => navigateTo(path));
+  frag.appendChild(row);
+
+  if (tree.loading.has(key)) {
+    const l = elm("div", "tloading", "reading…");
+    l.style.paddingLeft = `${1.4 + depth * 0.9}rem`;
+    frag.appendChild(l);
+  }
+  const below = new Set(seen).add(key);
+  if (tree.open.has(key) && !repeat) {
+    for (const c of filtered(children, below)) {
+      frag.appendChild(treeBranch(c, path.concat([c.ref]), depth + 1, below));
+    }
+  } else if (spine) {
+    // The trail continues through here but this layer was never read: show the
+    // next hop from its own identifier rather than hiding the path.
+    frag.appendChild(treeBranch({ ref: spine }, path.concat([spine]), depth + 1, below));
+  }
+  return frag;
+}
+
+// isTrailPrefix reports whether `path` is the trail's own prefix, so the spine is
+// drawn along the current path and nowhere else.
+function isTrailPrefix(path) {
+  if (path.length >= state.trail.length) return false;
+  return path.every((r, i) => sameRef(r, state.trail[i]));
+}
+
+async function toggleBranch(ref) {
+  const key = refKey(ref);
+  if (tree.open.has(key)) {
+    // Collapsing discards what the branch held, so re-opening reads again rather
+    // than restoring a layer nobody can vouch for.
+    tree.open.delete(key);
+    tree.nodes.delete(key);
+    renderTree();
+    return;
+  }
+  tree.open.add(key);
+  if (tree.nodes.has(key)) renderTree();
+  else await loadBranch(ref);
+}
+
+async function refreshRoots() {
+  try {
+    await loadRoots();
+  } catch (e) {
+    toast(e.message);
+  }
+  renderTree();
+  if (state.trail.length === 0) renderDetailBody();
+}
+
+// ---- node pane ------------------------------------------------------------
+
+function render() {
+  renderTree();
+  renderDetail();
+}
+
+// renderDetail resolves the selected reference — always, even when the tree
+// already holds its layer — and paints it.
+async function renderDetail() {
+  const seq = ++detail.seq;
+  const v = viewEl();
+
+  if (state.trail.length === 0) {
+    detail.node = null;
+    if (tree.roots === null) {
+      v.innerHTML = "";
+      v.appendChild(elm("div", "spinner", "Loading root Kustomizations…"));
+      try {
+        await loadRoots();
+      } catch (e) {
+        if (seq !== detail.seq) return;
+        v.innerHTML = "";
+        toast(e.message);
+        return;
+      }
+      if (seq !== detail.seq) return;
+      renderTree();
+    }
+    renderDetailBody();
+    return;
+  }
+
+  const ref = state.trail[state.trail.length - 1];
+  v.innerHTML = "";
+  v.appendChild(elm("div", "spinner", `Resolving ${refLabel(ref)}…`));
+  // The roots level backs the tree; fetch it once so the path is visible even on
+  // a deep link, without blocking the node itself.
+  if (tree.roots === null) loadRoots().then(renderTree).catch(() => {});
+
+  let node;
+  try {
+    node = await api(expandQuery(ref));
+  } catch (e) {
+    if (seq !== detail.seq) return;
+    v.innerHTML = "";
+    toast(e.message);
+    return;
+  }
+  if (seq !== detail.seq) return;
+
+  detail.node = node;
+  detail.at = Date.now();
+  // Selecting reveals: the layer just read is the tree's, too.
+  tree.nodes.set(refKey(ref), { node, at: detail.at });
+  if (node.expandable) tree.open.add(refKey(ref));
+  renderTree();
+  renderDetailBody();
+}
+
+// renderDetailBody paints what is already held — used again when a filter
+// changes, which must never trigger a call.
+function renderDetailBody() {
+  if (state.trail.length === 0) return renderRootsLevel();
+  if (!detail.node) return;
+  const node = detail.node;
+  const ref = node.ref || {};
+  const v = viewEl();
+  v.innerHTML = "";
+
+  if (node.context && state.context && node.context !== state.context) {
+    v.appendChild(elm("div", "notice",
+      `This resource resolves under context "${node.context}". Switch context to continue.`));
+  }
+
+  const head = elm("div", "head");
+  const top = elm("div", "head-top");
+  top.appendChild(elm("div", "kind", kindOf(ref)));
+  const h1 = elm("h1");
+  if (ref.namespace) h1.appendChild(elm("span", null, `${ref.namespace}/`));
+  h1.appendChild(document.createTextNode(ref.name || ""));
+  top.appendChild(h1);
+
+  const marks = elm("div", "head-marks");
+  const hc = elm("span", `chip ${(node.health || "unknown").toLowerCase()}`);
+  hc.appendChild(mark(node.health));
+  hc.appendChild(document.createTextNode(node.health || "unknown"));
+  marks.appendChild(hc);
+  if (node.freshness) {
+    const f = elm("span", "chip fresh");
+    f.appendChild(document.createTextNode(node.freshness));
+    marks.appendChild(f);
+  }
+  const read = elm("span", "read");
+  read.appendChild(document.createTextNode("read "));
+  read.appendChild(ageEl(detail.at));
+  read.appendChild(rereadButton("Re-read this node", renderDetail));
+  marks.appendChild(read);
+  const up = elm("button", "up", "↑ parent");
+  up.type = "button";
+  up.title = "Go up to the parent";
+  up.onclick = goUp;
+  marks.appendChild(up);
+  marks.appendChild(newExpButton(ref));
+  top.appendChild(marks);
+  head.appendChild(top);
+
+  const extras = rootExtras(ref);
+  const msg = node.error || node.detail || extras.message;
+  if (msg) head.appendChild(elm("div", "msg", msg));
+  const fields = (node.fields || []).concat(extras.fields);
+  if (fields.length) head.appendChild(fieldsPanel(fields));
+
+  // Dependencies live inside the node's own block: what it needs, grouped with
+  // it, rather than mixed into what it applies. No block at all when there are none.
+  const deps = node.dependencies || [];
+  if (deps.length) {
+    const box = elm("div", "deps");
+    box.appendChild(elm("div", "deps-h", "depends on"));
+    for (const dep of deps) box.appendChild(depRow(dep));
+    head.appendChild(box);
+  }
+  v.appendChild(head);
+
+  const children = node.children || [];
+  const shown = filtered(children, new Set([refKey(ref)]));
+  const lh = elm("div", "layer-h");
+  lh.appendChild(elm("h2", null,
+    `applies · ${shown.length === children.length ? children.length : `${shown.length} of ${children.length}`}`));
+  const { tally, bar } = layerSummary(children);
+  lh.appendChild(tally);
+  v.appendChild(lh);
+  if (children.length) v.appendChild(bar);
+
+  if (!children.length) {
+    v.appendChild(elm("div", "empty", "Applies nothing — this is a leaf in the current layer."));
+    return;
+  }
+  if (!shown.length) {
+    v.appendChild(elm("div", "empty", "Nothing in this layer matches the filter."));
+    return;
+  }
+
+  const rows = elm("div", "rows");
+  for (const child of shown) {
+    rows.appendChild(childRow(child));
+    const cdeps = child.dependencies || [];
+    if (cdeps.length) {
+      const sub = elm("div", "subdeps");
+      for (const dep of cdeps) sub.appendChild(depRow(dep));
+      rows.appendChild(sub);
+    }
+  }
+  v.appendChild(rows);
+}
+
+// renderRootsLevel is the node pane at the roots level: the same rows as the
+// tree, with the information a root carries in its own manifest.
+function renderRootsLevel() {
+  const v = viewEl();
+  v.innerHTML = "";
+  const roots = tree.roots || [];
+  const shown = filtered(roots);
+
+  const lh = elm("div", "layer-h");
+  lh.appendChild(elm("h2", null,
+    `root kustomizations · ${shown.length === roots.length ? roots.length : `${shown.length} of ${roots.length}`}`));
+  const { tally, bar } = layerSummary(roots);
+  lh.appendChild(tally);
+  const read = elm("span", "read");
+  read.appendChild(document.createTextNode("read "));
+  read.appendChild(ageEl(tree.rootsAt));
+  read.appendChild(rereadButton("Re-read the root Kustomizations", refreshRoots));
+  lh.appendChild(read);
+  v.appendChild(lh);
+  if (roots.length) v.appendChild(bar);
+
+  if (!roots.length) {
+    v.appendChild(elm("div", "empty", "No root Kustomizations in namespace 'flux' for this context."));
+    return;
+  }
+  if (!shown.length) {
+    v.appendChild(elm("div", "empty", "No root Kustomization matches the filter."));
+    return;
+  }
+
+  const rows = elm("div", "rows");
+  for (const r of shown) {
+    const row = rootRow(r);
+    rows.appendChild(row);
+  }
+  v.appendChild(rows);
+}
+
+function rootRow(r) {
+  const row = elm("div", "row container");
+  row.appendChild(mark(r.health));
+  row.appendChild(elm("span", "rchev", "▶"));
+  row.appendChild(elm("span", "rkind", "Kustomization"));
+  row.appendChild(elm("span", "rname", nameOf(r.ref)));
+
+  // Freshness has a cell of its own, so it survives the narrow layout where the
+  // rest of the row's fields are dropped. The root's path, source and interval
+  // are shown when it is opened, from this same listing.
+  row.appendChild(r.freshness ? elm("span", "chip fresh", r.freshness) : elm("span", "rfresh"));
+  const detailCell = elm("div", "rdetail inline-fields");
+  for (const f of r.fields || []) {
+    detailCell.appendChild(elm("span", "iflabel", f.label.toLowerCase()));
+    const v = elm("span", "ifvalue", f.value);
+    if (f.full) v.title = f.full;
+    detailCell.appendChild(v);
+  }
+  row.appendChild(detailCell);
+  row.appendChild(newExpButton(r.ref));
+  row.title = r.message || "";
+  return clickable(row, () => navigateTo([r.ref]));
+}
+
+// rootExtras reads a root Kustomization's path, interval and Ready message from
+// the roots listing already in hand. They live in its spec, not in its status,
+// and /api/expand does not carry them — reading them here costs no extra call.
+function rootExtras(ref) {
+  const r = (tree.roots || []).find((x) => sameRef(x.ref, ref));
+  if (!r) return { fields: [], message: "" };
+  const fields = [];
+  if (r.path) fields.push({ label: "Path", value: r.path });
+  if (r.interval) fields.push({ label: "Interval", value: r.interval });
+  if (r.lastTransition) fields.push({ label: "Since", value: r.lastTransition });
+  return { fields, message: r.message || "" };
+}
+
+function fieldsPanel(fields) {
+  const dl = elm("dl", "fields");
+  for (const f of fields) {
+    dl.appendChild(elm("dt", null, f.label));
+    const dd = elm("dd", null, f.value);
+    if (f.full) dd.title = f.full;
+    dl.appendChild(dd);
+  }
+  return dl;
+}
+
+function childRow(node) {
+  const ref = node.ref || {};
+  const row = elm("div", "row" + (node.expandable ? " container" : ""));
+  row.appendChild(mark(node.health));
+  row.appendChild(elm("span", "rchev" + (node.expandable ? "" : " leaf"), "▶"));
+  row.appendChild(elm("span", "rkind", kindOf(ref)));
+  row.appendChild(elm("span", "rname", nameOf(ref)));
+  // Freshness is never claimed for a listed entry — the cell keeps the columns
+  // aligned with the roots level, which does carry one.
+  row.appendChild(elm("span", "rfresh"));
+  row.appendChild(detailCell(node));
+  row.appendChild(newExpButton(ref));
+  return clickable(row, () => drillTo(ref));
+}
+
+function depRow(node) {
+  const ref = node.ref || {};
+  const row = elm("div", "dep");
+  row.appendChild(mark(node.health));
+  row.appendChild(elm("span", "rkind", kindOf(ref)));
+  row.appendChild(elm("span", "rname", nameOf(ref)));
+  row.appendChild(detailCell(node));
+  return clickable(row, () => drillTo(ref));
+}
+
+// detailCell shows a Flux object's own fields inline — repo, branch, interval —
+// so the reader never has to open a row to learn where the code comes from.
+function detailCell(node) {
+  if (node.fields && node.fields.length) {
+    const wrap = elm("div", "rdetail inline-fields");
+    for (const f of node.fields) {
+      wrap.appendChild(elm("span", "iflabel", f.label.toLowerCase()));
+      const v = elm("span", "ifvalue", f.value);
+      if (f.full) v.title = f.full;
+      wrap.appendChild(v);
+    }
+    return wrap;
+  }
+  const d = elm("div", "rdetail", node.error || node.detail || "");
+  if (node.error || node.detail) d.title = node.error || node.detail;
+  return d;
+}
+
 // ---- context bar ----------------------------------------------------------
 
 async function loadContexts() {
@@ -192,276 +758,13 @@ async function loadContexts() {
     // A trail is a path through one cluster: carrying it into another context
     // would address objects that may not exist there.
     state.context = sel.value;
+    resetTree();
     navigateTo([]);
   };
 }
 
-// syncContextBar reflects state.context in the selector and the header, so a
-// history entry carrying another context is shown as such.
 function syncContextBar() {
   el("#context").value = state.context;
-  el("#ctx-active").textContent = state.context ? `→ ${state.context}` : "";
-}
-
-// ---- rendering ------------------------------------------------------------
-
-function renderBreadcrumb() {
-  const bar = crumbEl();
-  const c = el("#crumbs");
-  // The bar holds the up control, so it is hidden as a whole on the roots home:
-  // there is no parent to go up to.
-  if (state.trail.length === 0) {
-    bar.hidden = true;
-    c.innerHTML = "";
-    return;
-  }
-  bar.hidden = false;
-  el("#up").onclick = goUp;
-  c.innerHTML = "";
-  const home = document.createElement("a");
-  home.textContent = "roots";
-  home.onclick = () => navigateTo([]);
-  c.appendChild(home);
-  state.trail.forEach((ref, i) => {
-    const sep = document.createElement("span");
-    sep.className = "sep";
-    sep.textContent = " / ";
-    c.appendChild(sep);
-    const a = document.createElement("a");
-    a.textContent = refLabel(ref);
-    a.onclick = () => navigateTo(state.trail.slice(0, i + 1));
-    c.appendChild(a);
-  });
-}
-
-// listEntry renders one list entry: its row, plus its own dependencies nested
-// under it when it has any — so a listed Kustomization shows its source and what
-// it waits on without being opened.
-function listEntry(node, { dependency } = {}) {
-  const row = nodeRow(node, { onClick: () => drillTo(node.ref), dependency });
-  const deps = node.dependencies || [];
-  if (!deps.length) return row;
-
-  const group = document.createElement("div");
-  group.className = "entry";
-  group.appendChild(row);
-  const nested = document.createElement("div");
-  nested.className = "nested-deps";
-  for (const dep of deps) {
-    nested.appendChild(nodeRow(dep, { onClick: () => drillTo(dep.ref), dependency: true }));
-  }
-  group.appendChild(nested);
-  return group;
-}
-
-function nodeRow(node, { onClick, dependency } = {}) {
-  const row = document.createElement("div");
-  // An expandable node carries a subtree: the accent tells the user, before any
-  // click, that opening it leads somewhere. A dependency is styled apart: it is
-  // something the node needs, not something it produces.
-  const classes = ["row"];
-  if (dependency) classes.push("dep");
-  else if (node.expandable) classes.push("container");
-  row.className = classes.join(" ");
-  row.appendChild(badge(node.health));
-
-  const grow = document.createElement("div");
-  grow.className = "grow";
-  const ref = node.ref || {};
-  const name = document.createElement("div");
-  name.className = "name";
-  if (dependency) {
-    const arrow = document.createElement("span");
-    arrow.className = "chevron dep-arrow";
-    arrow.textContent = "\u21e2";
-    arrow.title = "Required by this resource";
-    name.appendChild(arrow);
-  } else if (node.expandable) {
-    const chev = document.createElement("span");
-    chev.className = "chevron";
-    chev.textContent = "\u25b8";
-    chev.title = "Contains other resources — click to open";
-    name.appendChild(chev);
-  }
-  name.appendChild(document.createTextNode(refLabel(ref)));
-  grow.appendChild(name);
-  // Flux objects carry their fields inline — repo, branch, interval — so the
-  // reader never has to open a row to learn where the code comes from.
-  if (node.fields && node.fields.length) {
-    grow.appendChild(inlineFields(node.fields));
-  } else {
-    const detail = document.createElement("div");
-    detail.className = "detail";
-    detail.textContent = node.error ? node.error : (node.detail || "");
-    grow.appendChild(detail);
-  }
-  row.appendChild(grow);
-
-  const nx = document.createElement("button");
-  nx.className = "newexp";
-  nx.textContent = "↗ new";
-  nx.title = "Open a new exploration from here";
-  nx.onclick = (e) => { e.stopPropagation(); newExploration(ref); };
-  row.appendChild(nx);
-
-  if (onClick) row.onclick = onClick;
-  return row;
-}
-
-async function renderHome() {
-  renderBreadcrumb();
-  const v = viewEl();
-  v.innerHTML = `<div class="spinner">Loading root Kustomizations…</div>`;
-  let roots;
-  try {
-    ({ roots } = await api(`/api/roots?context=${encodeURIComponent(state.context)}`));
-  } catch (e) {
-    v.innerHTML = "";
-    toast(e.message);
-    return;
-  }
-  v.innerHTML = "";
-  const title = document.createElement("div");
-  title.className = "section-title";
-  title.textContent = `root kustomizations · ns flux · ${roots.length}`;
-  v.appendChild(title);
-
-  if (roots.length === 0) {
-    const e = document.createElement("div");
-    e.className = "empty";
-    e.textContent = "No root Kustomizations in namespace 'flux' for this context.";
-    v.appendChild(e);
-    return;
-  }
-
-  for (const r of roots) {
-    const card = document.createElement("div");
-    card.className = "card";
-    const head = document.createElement("div");
-    head.className = "card-head";
-    head.appendChild(badge(r.health));
-    const fb = freshnessBadge(r.freshness);
-    if (fb) head.appendChild(fb);
-    const t = document.createElement("span");
-    t.className = "title";
-    t.textContent = `${r.ref.namespace}/${r.ref.name}`;
-    head.appendChild(t);
-    card.appendChild(head);
-
-    if (r.fields && r.fields.length) card.appendChild(fieldsPanel(r.fields));
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const bits = [];
-    if (r.sourceKind) bits.push(`<span>source <b>${r.sourceKind}/${r.sourceName}</b></span>`);
-    if (r.path) bits.push(`<span>path <b>${r.path}</b></span>`);
-    if (r.interval) bits.push(`<span>interval <b>${r.interval}</b></span>`);
-    meta.innerHTML = bits.join("");
-    card.appendChild(meta);
-
-    if (r.message) {
-      const m = document.createElement("div");
-      m.className = "msg";
-      m.textContent = r.message;
-      card.appendChild(m);
-    }
-
-    card.style.cursor = "pointer";
-    card.onclick = () => drillTo(r.ref);
-    v.appendChild(card);
-  }
-}
-
-async function renderExplore() {
-  renderBreadcrumb();
-  const ref = state.trail[state.trail.length - 1];
-  const v = viewEl();
-  v.innerHTML = `<div class="spinner">Resolving ${refLabel(ref)}…</div>`;
-
-  let node;
-  try {
-    node = await api(expandQuery(ref));
-  } catch (e) {
-    v.innerHTML = "";
-    toast(e.message);
-    return;
-  }
-  v.innerHTML = "";
-
-  if (node.context && state.context && node.context !== state.context) {
-    const n = document.createElement("div");
-    n.className = "notice";
-    n.textContent = `This resource resolves under context "${node.context}". Switch context to continue.`;
-    v.appendChild(n);
-  }
-
-  // Current node header.
-  const head = document.createElement("div");
-  head.className = "card";
-  const hh = document.createElement("div");
-  hh.className = "card-head";
-  hh.appendChild(badge(node.health));
-  const nfb = freshnessBadge(node.freshness);
-  if (nfb) hh.appendChild(nfb);
-  const t = document.createElement("span");
-  t.className = "title";
-  if (node.expandable) {
-    const chev = document.createElement("span");
-    chev.className = "chevron";
-    chev.textContent = "\u25b8";
-    t.appendChild(chev);
-  }
-  t.appendChild(document.createTextNode(refLabel(node.ref)));
-  hh.appendChild(t);
-  head.appendChild(hh);
-  if (node.fields && node.fields.length) head.appendChild(fieldsPanel(node.fields));
-  if (node.error || (node.detail && !(node.fields && node.fields.length))) {
-    const d = document.createElement("div");
-    d.className = "msg";
-    d.textContent = node.error || node.detail;
-    head.appendChild(d);
-  }
-
-  // Dependencies live inside the node's own card: what it needs, grouped with
-  // it, rather than mixed into what it applies. No block at all when there are
-  // none.
-  const deps = node.dependencies || [];
-  if (deps.length) {
-    const wrap = document.createElement("div");
-    wrap.className = "deps";
-    const dt = document.createElement("div");
-    dt.className = "deps-title";
-    dt.textContent = "depends on";
-    wrap.appendChild(dt);
-    for (const dep of deps) {
-      wrap.appendChild(listEntry(dep, { dependency: true }));
-    }
-    head.appendChild(wrap);
-  }
-  v.appendChild(head);
-
-  const title = document.createElement("div");
-  title.className = "section-title";
-  const children = node.children || [];
-  title.textContent = `applies · ${children.length}`;
-  v.appendChild(title);
-
-  if (children.length === 0) {
-    const e = document.createElement("div");
-    e.className = "empty";
-    e.textContent = "Applies nothing — this is a leaf in the current layer.";
-    v.appendChild(e);
-    return;
-  }
-
-  for (const child of children) {
-    v.appendChild(listEntry(child));
-  }
-}
-
-function render() {
-  if (state.trail.length === 0) renderHome();
-  else renderExplore();
 }
 
 // ---- navigation -----------------------------------------------------------
@@ -473,6 +776,7 @@ function navigateTo(trail) {
   state.trail = trail;
   syncContextBar();
   history.pushState(null, "", urlFor(state.context, state.trail));
+  closeDrawer();
   render();
 }
 
@@ -506,6 +810,24 @@ function readURL() {
   }
 }
 
+// ---- drawer (narrow viewports) --------------------------------------------
+
+function closeDrawer() {
+  treeEl().classList.remove("open");
+  el("#drawer").setAttribute("aria-expanded", "false");
+}
+
+el("#drawer").onclick = () => {
+  const open = treeEl().classList.toggle("open");
+  el("#drawer").setAttribute("aria-expanded", String(open));
+};
+
+el("#q").oninput = (e) => {
+  filter.q = e.target.value.trim().toLowerCase();
+  renderTree();
+  renderDetailBody();
+};
+
 // ---- boot -----------------------------------------------------------------
 
 window.addEventListener("popstate", () => {
@@ -517,6 +839,8 @@ window.addEventListener("popstate", () => {
 
 (async function main() {
   const err = readURL();
+  buildHealthFilter();
+  setInterval(tickAges, 15000);
   try {
     await loadContexts();
   } catch (e) {

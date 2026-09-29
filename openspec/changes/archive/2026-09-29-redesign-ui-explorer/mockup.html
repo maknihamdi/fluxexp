@@ -1,0 +1,589 @@
+<title>fluxexp portal</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: a fixed console shell — header rail, persistent tree pane, detail pane.
+     The tree pane collapses into a drawer below 760px. */
+  :root {
+    --bg: #eef0f3;
+    --pane: #ffffff;
+    --pane-2: #f6f7f9;
+    --line: #d8dde4;
+    --line-soft: #e7eaef;
+    --fg: #182029;
+    --fg-dim: #5d6774;
+    --fg-faint: #8a94a2;
+    --accent: #2f6f9f;
+    --accent-soft: #e3eef7;
+    --ok: #2e7d4f;
+    --warn: #a56a12;
+    --bad: #c0392f;
+    --none: #7b8694;
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1218; --pane: #151b23; --pane-2: #1a212a; --line: #2a333f;
+      --line-soft: #222a34; --fg: #e4e9ef; --fg-dim: #9aa5b3; --fg-faint: #6f7b8a;
+      --accent: #79b8e8; --accent-soft: #17293a;
+      --ok: #4fb87a; --warn: #d79b3c; --bad: #ef6f62; --none: #74808f;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1218; --pane: #151b23; --pane-2: #1a212a; --line: #2a333f;
+    --line-soft: #222a34; --fg: #e4e9ef; --fg-dim: #9aa5b3; --fg-faint: #6f7b8a;
+    --accent: #79b8e8; --accent-soft: #17293a;
+    --ok: #4fb87a; --warn: #d79b3c; --bad: #ef6f62; --none: #74808f;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 var(--sans);
+    display: flex; flex-direction: column;
+    font-variant-numeric: tabular-nums;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ---- header rail ---- */
+  .rail {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .5rem 1rem; padding-top: calc(.5rem + env(safe-area-inset-top, 0px));
+    background: var(--pane); border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .brand { font-family: var(--mono); font-weight: 600; letter-spacing: -.02em; }
+  .brand i { font-style: normal; color: var(--accent); }
+  .rail .sep { width: 1px; height: 20px; background: var(--line); }
+  .ctx { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+  .lbl { font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-faint); }
+  select, .field {
+    background: var(--pane-2); border: 1px solid var(--line); border-radius: 4px;
+    padding: .25rem .4rem; color: var(--fg);
+  }
+  .filter { margin-left: auto; display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+  .filter input { width: 11rem; min-width: 7rem; }
+  .hfilter { display: flex; gap: .25rem; }
+  .hf {
+    border: 1px solid var(--line); background: transparent; border-radius: 4px;
+    padding: .18rem .45rem; font-size: .74rem; cursor: pointer; color: var(--fg-dim);
+    display: inline-flex; align-items: center; gap: .3rem;
+  }
+  .hf[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--fg); }
+  .drawer-btn { display: none; }
+
+  /* ---- shell ---- */
+  .shell { flex: 1; display: grid; grid-template-columns: minmax(240px, 22rem) 1fr; min-height: 0; }
+  .tree {
+    background: var(--pane); border-right: 1px solid var(--line);
+    overflow: auto; padding: .5rem 0 2rem; min-width: 0;
+  }
+  .detail { overflow: auto; min-width: 0; padding: 1rem; padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px)); }
+  .detail-inner { max-width: 62rem; margin: 0 auto; }
+
+  /* ---- health marks: colour plus shape, never colour alone ---- */
+  .mk { width: .62rem; height: .62rem; flex: none; display: inline-block; }
+  .mk.healthy { background: var(--ok); border-radius: 50%; }
+  .mk.pending { border: 2px solid var(--warn); border-radius: 50%; background: linear-gradient(90deg, var(--warn) 50%, transparent 50%); }
+  .mk.unhealthy { background: var(--bad); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .mk.unknown { border: 1.5px solid var(--none); border-radius: 50%; }
+  .mk.error { background: var(--bad); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem;
+    letter-spacing: .04em; text-transform: uppercase; font-weight: 500;
+    padding: .12rem .42rem; border-radius: 3px; border: 1px solid var(--line-soft);
+    background: var(--pane-2); color: var(--fg-dim);
+  }
+  .chip.healthy { color: var(--ok); }
+  .chip.pending { color: var(--warn); }
+  .chip.unhealthy, .chip.error { color: var(--bad); }
+  .chip.fresh { font-family: var(--mono); text-transform: none; letter-spacing: 0; }
+
+  /* ---- tree ---- */
+  .tgroup-label {
+    font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-faint);
+    padding: .5rem 1rem .25rem;
+  }
+  .trow {
+    display: flex; align-items: center; gap: .4rem; width: 100%;
+    padding: .22rem .6rem .22rem 0; border: 0; background: transparent; text-align: left;
+    cursor: pointer; border-left: 2px solid transparent; min-width: 0;
+  }
+  .trow:hover { background: var(--pane-2); }
+  .trow[aria-current="true"] { background: var(--accent-soft); border-left-color: var(--accent); }
+  .twist {
+    width: 1.1rem; height: 1.1rem; flex: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--fg-faint); display: inline-flex; align-items: center; justify-content: center;
+    font-size: .6rem; border-radius: 3px;
+  }
+  .twist:hover { color: var(--accent); background: var(--line-soft); }
+  .twist.leaf { visibility: hidden; }
+  .twist[aria-expanded="true"] { transform: rotate(90deg); }
+  .tname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tname em { font-style: normal; color: var(--fg-faint); font-family: var(--mono); font-size: .76rem; margin-right: .35rem; }
+  .trow.container .tname { font-weight: 500; }
+  .tcount { margin-left: auto; font-family: var(--mono); font-size: .7rem; color: var(--fg-faint); }
+
+  /* ---- detail ---- */
+  .head {
+    background: var(--pane); border: 1px solid var(--line); border-radius: 6px;
+    padding: .85rem 1rem;
+  }
+  .head-top { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+  .kind { font-family: var(--mono); font-size: .76rem; color: var(--fg-faint); letter-spacing: .02em; }
+  h1 { font-size: 1.35rem; margin: 0; font-weight: 600; letter-spacing: -.01em; text-wrap: balance; }
+  h1 span { color: var(--fg-dim); font-weight: 400; }
+  .head-marks { display: flex; gap: .4rem; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .read {
+    font-family: var(--mono); font-size: .72rem; color: var(--fg-faint);
+    display: inline-flex; align-items: center; gap: .4rem;
+  }
+  .read button {
+    border: 1px solid var(--line); background: transparent; border-radius: 3px;
+    padding: .05rem .35rem; cursor: pointer; color: var(--fg-dim); font-size: .72rem;
+  }
+  .read button:hover { color: var(--accent); border-color: var(--accent); }
+  .msg { margin-top: .5rem; color: var(--fg-dim); font-size: .85rem; }
+  .fields {
+    margin-top: .7rem; display: grid; grid-template-columns: max-content minmax(0, 1fr);
+    gap: .18rem .9rem; font-size: .82rem; border-top: 1px solid var(--line-soft); padding-top: .6rem;
+  }
+  .fields dt { color: var(--fg-faint); font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; align-self: center; }
+  .fields dd { margin: 0; font-family: var(--mono); font-size: .8rem; overflow-wrap: anywhere; }
+
+  .deps { margin-top: .8rem; border-top: 1px solid var(--line-soft); padding-top: .6rem; }
+  .deps-h { font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-faint); margin-bottom: .35rem; }
+  .dep {
+    display: flex; align-items: center; gap: .5rem; width: 100%; text-align: left;
+    background: transparent; border: 0; border-left: 2px dashed var(--line); cursor: pointer;
+    padding: .25rem .5rem; min-width: 0;
+  }
+  .dep:hover { border-left-color: var(--accent); background: var(--pane-2); }
+
+  .layer-h {
+    display: flex; align-items: baseline; gap: .6rem; margin: 1.1rem 0 .4rem; flex-wrap: wrap;
+  }
+  .layer-h h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-faint); margin: 0; font-weight: 500; }
+  .tally { display: flex; gap: .7rem; font-size: .74rem; color: var(--fg-dim); font-family: var(--mono); }
+  .tally span { display: inline-flex; align-items: center; gap: .3rem; }
+  .bar { display: flex; height: 3px; border-radius: 2px; overflow: hidden; background: var(--line-soft); margin-bottom: .5rem; }
+  .bar i { display: block; }
+  .bar i.healthy { background: var(--ok); }
+  .bar i.pending { background: var(--warn); }
+  .bar i.unhealthy, .bar i.error { background: var(--bad); }
+  .bar i.unknown { background: var(--none); }
+
+  .rows { display: flex; flex-direction: column; }
+  .row {
+    display: grid; grid-template-columns: .7rem 1rem 11rem minmax(0, 1fr) auto;
+    align-items: center; gap: .55rem; width: 100%; text-align: left;
+    background: transparent; border: 0; border-bottom: 1px solid var(--line-soft);
+    border-left: 2px solid transparent; padding: .42rem .5rem; cursor: pointer; min-width: 0;
+  }
+  .row:hover { background: var(--pane); border-left-color: var(--accent); }
+  .row .rkind { font-family: var(--mono); font-size: .76rem; color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; }
+  .row .rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.container .rname { font-weight: 500; }
+  .row .rdetail { font-size: .78rem; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .rchev { color: var(--accent); font-size: .6rem; }
+  .row .rchev.leaf { visibility: hidden; }
+  .subdeps { margin-left: 2.9rem; border-left: 1px dashed var(--line); }
+  .empty { color: var(--fg-faint); padding: 1.5rem .5rem; }
+  .note {
+    margin-top: .8rem; font-size: .78rem; color: var(--fg-dim);
+    border-left: 2px solid var(--accent); padding-left: .6rem;
+  }
+
+  @media (max-width: 760px) {
+    .shell { grid-template-columns: 1fr; }
+    .tree {
+      position: fixed; z-index: 3; inset: auto 0 0 0; top: 0; width: min(20rem, 84vw);
+      border-right: 1px solid var(--line); box-shadow: 0 0 40px rgba(0,0,0,.25);
+      transform: translateX(-102%); transition: transform .18s ease;
+      padding-top: calc(.5rem + env(safe-area-inset-top, 0px));
+    }
+    .tree.open { transform: none; }
+    .drawer-btn {
+      display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--line);
+      background: var(--pane-2); border-radius: 4px; padding: .25rem .5rem; cursor: pointer;
+    }
+    .filter { width: 100%; margin-left: 0; }
+    .filter input { flex: 1; width: auto; }
+    .row { grid-template-columns: .7rem 1rem minmax(0, 1fr) auto; }
+    .row .rdetail { display: none; }
+    h1 { font-size: 1.15rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { .tree { transition: none; } }
+</style>
+
+<header class="rail">
+  <button class="drawer-btn" id="drawer" type="button" aria-expanded="false">☰ tree</button>
+  <div class="brand">flux<i>exp</i></div>
+  <div class="sep" aria-hidden="true"></div>
+  <div class="ctx">
+    <span class="lbl">context</span>
+    <select id="ctx" aria-label="kube context">
+      <option>gke_prod_eu-west1_platform</option>
+      <option>gke_staging_eu-west1_platform</option>
+      <option>kind-local</option>
+    </select>
+  </div>
+  <div class="filter">
+    <input id="q" class="field" type="search" placeholder="filter by name…" aria-label="filter by name">
+    <div class="hfilter" id="hf" role="group" aria-label="filter by health"></div>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="tree" id="tree" aria-label="resource tree"></nav>
+  <main class="detail"><div class="detail-inner" id="detail"></div></main>
+</div>
+
+<script>
+"use strict";
+
+// Static stand-in for /api/expand — one entry per reference, exactly the shape the
+// real DTO already carries (health, freshness, fields, dependencies, children).
+const G = {
+  "root": { kind: "", ns: "", name: "root kustomizations", children: ["ks/flux/apps", "ks/flux/infrastructure", "ks/flux/tenants"] },
+
+  "ks/flux/apps": {
+    kind: "Kustomization", ns: "flux", name: "apps", health: "healthy", freshness: "up-to-date",
+    fields: [["applied revision", "main@sha1:1a2b3c4"], ["synced", "2 min ago"], ["path", "./clusters/prod/apps"], ["interval", "10m"]],
+    message: "Applied revision: main@sha1:1a2b3c4",
+    deps: ["git/flux/flux-system", "ks/flux/infrastructure"],
+    children: ["hr/team-a/web", "ks/team-a/backend", "cm/team-a/settings", "sa/team-a/web"],
+  },
+  "ks/flux/infrastructure": {
+    kind: "Kustomization", ns: "flux", name: "infrastructure", health: "healthy", freshness: "up-to-date",
+    fields: [["applied revision", "main@sha1:1a2b3c4"], ["synced", "2 min ago"], ["path", "./clusters/prod/infra"], ["interval", "10m"]],
+    deps: ["git/flux/flux-system"],
+    children: ["hr/cert-manager/cert-manager", "crt/istio-system/gateway-tls"],
+  },
+  "ks/flux/tenants": {
+    kind: "Kustomization", ns: "flux", name: "tenants", health: "unhealthy", freshness: "failed",
+    fields: [["applied revision", "main@sha1:98fe210"], ["synced", "41 min ago"], ["path", "./clusters/prod/tenants"], ["interval", "10m"]],
+    message: "kustomize build failed: accumulating resources from 'team-c': evalsymlink failure on '/tmp/.../team-c'",
+    deps: ["git/flux/flux-system"],
+    children: [],
+  },
+
+  "git/flux/flux-system": {
+    kind: "GitRepository", ns: "flux", name: "flux-system", health: "healthy",
+    fields: [["repository", "ssh://git@github.com/acme/platform-gitops"], ["ref", "branch main"], ["interval", "1m"]],
+    detail: "main@sha1:1a2b3c4",
+  },
+  "ks/team-a/backend": {
+    kind: "Kustomization", ns: "team-a", name: "backend", health: "pending", freshness: "behind",
+    fields: [["applied revision", "main@sha1:98fe210"], ["synced", "38 min ago"], ["interval", "5m"]],
+    message: "Reconciliation in progress",
+    deps: ["git/flux/flux-system"],
+    children: ["dep/team-a/api"],
+    detail: "reconciling",
+  },
+  "hr/team-a/web": {
+    kind: "HelmRelease", ns: "team-a", name: "web", health: "healthy",
+    fields: [["chart", "web 4.2.1"], ["revision", "12"], ["interval", "5m"]],
+    deps: ["chart/flux/team-a-web", "hrepo/flux/acme-charts"],
+    children: ["dep/team-a/web", "svc/team-a/web", "cm/team-a/web-config", "ing/team-a/web"],
+    detail: "chart web 4.2.1 · revision 12",
+  },
+  "hr/cert-manager/cert-manager": {
+    kind: "HelmRelease", ns: "cert-manager", name: "cert-manager", health: "healthy",
+    fields: [["chart", "cert-manager v1.14.4"], ["revision", "7"], ["interval", "30m"]],
+    deps: ["hrepo/flux/jetstack"],
+    children: ["dep/cert-manager/cert-manager", "dep/cert-manager/webhook"],
+    detail: "chart cert-manager v1.14.4",
+  },
+  "chart/flux/team-a-web": { kind: "HelmChart", ns: "flux", name: "team-a-web", health: "healthy", detail: "web 4.2.1", fields: [["source", "HelmRepository acme-charts"]] },
+  "hrepo/flux/acme-charts": { kind: "HelmRepository", ns: "flux", name: "acme-charts", health: "healthy", fields: [["url", "oci://europe-docker.pkg.dev/acme/charts"], ["interval", "1h"]] },
+  "hrepo/flux/jetstack": { kind: "HelmRepository", ns: "flux", name: "jetstack", health: "healthy", fields: [["url", "https://charts.jetstack.io"], ["interval", "1h"]] },
+
+  "dep/team-a/web": {
+    kind: "Deployment", ns: "team-a", name: "web", health: "healthy",
+    fields: [["replicas", "3/3 ready"], ["image", "europe-docker.pkg.dev/acme/web:4.2.1"]],
+    children: ["rs/team-a/web-7d9c4", "pod/team-a/web-7d9c4-xk2ll", "pod/team-a/web-7d9c4-p9m4z"],
+    detail: "3/3 ready",
+  },
+  "dep/team-a/api": {
+    kind: "Deployment", ns: "team-a", name: "api", health: "pending",
+    fields: [["replicas", "1/3 ready"], ["image", "europe-docker.pkg.dev/acme/api:2.9.0"]],
+    message: "ReplicaSet \"api-6f8b\" is progressing",
+    children: ["rs/team-a/api-6f8b", "pod/team-a/api-6f8b-2n7qd"],
+    detail: "1/3 ready",
+  },
+  "dep/cert-manager/cert-manager": { kind: "Deployment", ns: "cert-manager", name: "cert-manager", health: "healthy", detail: "1/1 ready", children: [] },
+  "dep/cert-manager/webhook": { kind: "Deployment", ns: "cert-manager", name: "webhook", health: "healthy", detail: "1/1 ready", children: [] },
+  "rs/team-a/web-7d9c4": { kind: "ReplicaSet", ns: "team-a", name: "web-7d9c4", health: "healthy", detail: "3/3 ready", children: [] },
+  "rs/team-a/api-6f8b": { kind: "ReplicaSet", ns: "team-a", name: "api-6f8b", health: "pending", detail: "1/3 ready", children: [] },
+  "pod/team-a/web-7d9c4-xk2ll": { kind: "Pod", ns: "team-a", name: "web-7d9c4-xk2ll", health: "healthy", detail: "Running · 1/1" },
+  "pod/team-a/web-7d9c4-p9m4z": { kind: "Pod", ns: "team-a", name: "web-7d9c4-p9m4z", health: "healthy", detail: "Running · 1/1" },
+  "pod/team-a/api-6f8b-2n7qd": { kind: "Pod", ns: "team-a", name: "api-6f8b-2n7qd", health: "unhealthy", detail: "CrashLoopBackOff · restarts 7", message: "back-off 5m0s restarting failed container=api" },
+  "svc/team-a/web": { kind: "Service", ns: "team-a", name: "web", health: "healthy", detail: "ClusterIP 10.24.9.17:80" },
+  "ing/team-a/web": { kind: "Ingress", ns: "team-a", name: "web", health: "healthy", detail: "web.acme.example" },
+  "cm/team-a/settings": { kind: "ConfigMap", ns: "team-a", name: "settings", health: "healthy" },
+  "cm/team-a/web-config": { kind: "ConfigMap", ns: "team-a", name: "web-config", health: "healthy" },
+  "sa/team-a/web": { kind: "ServiceAccount", ns: "team-a", name: "web", health: "healthy" },
+  "crt/istio-system/gateway-tls": {
+    kind: "Certificate", ns: "istio-system", name: "gateway-tls", health: "unhealthy",
+    fields: [["dns names", "*.acme.example"], ["issuer", "letsencrypt-prod"]],
+    message: "Ready=False: Failed to verify ACME account: acme: account does not exist",
+    children: [],
+  },
+};
+
+const HEALTHS = ["healthy", "pending", "unhealthy", "unknown", "error"];
+const expandable = (id) => Array.isArray(G[id] && G[id].children);
+const kids = (id) => (G[id] && G[id].children) || [];
+const health = (id) => (G[id] && G[id].health) || "unknown";
+
+const ui = {
+  selected: "ks/flux/apps",
+  open: new Set(["root", "ks/flux/apps"]),
+  read: new Map(),          // id -> ms since read, faked
+  q: "",
+  hidden: new Set(),        // health values filtered out
+};
+G["ks/flux/apps"] && ui.read.set("ks/flux/apps", 42);
+
+const $ = (s) => document.querySelector(s);
+const elm = (tag, cls, txt) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt != null) e.textContent = txt;
+  return e;
+};
+const mark = (h) => elm("span", `mk ${h}`);
+const label = (id) => {
+  const n = G[id]; if (!n) return id;
+  return n.ns ? `${n.ns}/${n.name}` : n.name;
+};
+const matches = (id) => {
+  const n = G[id]; if (!n) return false;
+  if (ui.hidden.has(health(id))) return false;
+  if (!ui.q) return true;
+  const hay = `${n.kind} ${n.ns} ${n.name}`.toLowerCase();
+  return hay.includes(ui.q.toLowerCase());
+};
+// A branch survives the filter when it matches or when something under it does —
+// filtering must never hide the path to a match.
+const branchMatches = (id) => matches(id) || kids(id).some(branchMatches);
+
+// ---- tree ----------------------------------------------------------------
+
+function renderTree() {
+  const t = $("#tree");
+  t.innerHTML = "";
+  t.appendChild(elm("div", "tgroup-label", "root kustomizations · ns flux"));
+  for (const id of kids("root")) t.appendChild(treeNode(id, 0));
+}
+
+function treeNode(id, depth) {
+  const wrap = document.createDocumentFragment();
+  if (!branchMatches(id)) return wrap;
+  const n = G[id];
+  const row = elm("button", "trow" + (expandable(id) ? " container" : ""));
+  row.type = "button";
+  row.style.paddingLeft = `${.5 + depth * .9}rem`;
+  if (id === ui.selected) row.setAttribute("aria-current", "true");
+
+  const tw = elm("button", "twist" + (expandable(id) && kids(id).length ? "" : " leaf"), "▶");
+  tw.type = "button";
+  tw.setAttribute("aria-expanded", String(ui.open.has(id)));
+  tw.setAttribute("aria-label", ui.open.has(id) ? `collapse ${label(id)}` : `expand ${label(id)}`);
+  tw.onclick = (e) => { e.stopPropagation(); toggle(id); };
+  row.appendChild(tw);
+  row.appendChild(mark(health(id)));
+
+  const name = elm("span", "tname");
+  name.appendChild(elm("em", null, n.kind));
+  name.appendChild(document.createTextNode(label(id)));
+  row.appendChild(name);
+  if (expandable(id) && kids(id).length) row.appendChild(elm("span", "tcount", String(kids(id).length)));
+  row.onclick = () => select(id, true);
+  wrap.appendChild(row);
+
+  if (ui.open.has(id)) for (const k of kids(id)) wrap.appendChild(treeNode(k, depth + 1));
+  return wrap;
+}
+
+function toggle(id) {
+  if (ui.open.has(id)) ui.open.delete(id);
+  else { ui.open.add(id); ui.read.set(id, 0); }
+  renderTree();
+}
+
+function select(id, reveal) {
+  ui.selected = id;
+  if (reveal && expandable(id)) ui.open.add(id);
+  ui.read.set(id, 0);
+  renderTree();
+  renderDetail();
+  $("#tree").classList.remove("open");
+  $("#drawer").setAttribute("aria-expanded", "false");
+}
+
+// ---- detail --------------------------------------------------------------
+
+function renderDetail() {
+  const id = ui.selected, n = G[id];
+  const d = $("#detail");
+  d.innerHTML = "";
+
+  const head = elm("div", "head");
+  const top = elm("div", "head-top");
+  const h = elm("h1");
+  h.appendChild(elm("span", null, n.ns ? `${n.ns}/` : ""));
+  h.appendChild(document.createTextNode(n.name));
+  top.appendChild(elm("div", "kind", n.kind));
+  top.appendChild(h);
+
+  const marks = elm("div", "head-marks");
+  const hc = elm("span", `chip ${health(id)}`);
+  hc.appendChild(mark(health(id)));
+  hc.appendChild(document.createTextNode(health(id)));
+  marks.appendChild(hc);
+  if (n.freshness) marks.appendChild(elm("span", "chip fresh", n.freshness));
+  const read = elm("span", "read");
+  const age = ui.read.get(id) || 0;
+  read.appendChild(document.createTextNode(age ? `read ${age}s ago` : "read just now"));
+  const rb = elm("button", null, "↻");
+  rb.type = "button";
+  rb.title = "Re-read this node";
+  rb.onclick = () => { ui.read.set(id, 0); renderDetail(); };
+  read.appendChild(rb);
+  marks.appendChild(read);
+  top.appendChild(marks);
+  head.appendChild(top);
+
+  if (n.message) head.appendChild(elm("div", "msg", n.message));
+
+  if (n.fields && n.fields.length) {
+    const dl = elm("dl", "fields");
+    for (const [k, v] of n.fields) { dl.appendChild(elm("dt", null, k)); dl.appendChild(elm("dd", null, v)); }
+    head.appendChild(dl);
+  }
+
+  if (n.deps && n.deps.length) {
+    const box = elm("div", "deps");
+    box.appendChild(elm("div", "deps-h", "depends on"));
+    for (const depId of n.deps) box.appendChild(depRow(depId));
+    head.appendChild(box);
+  }
+  d.appendChild(head);
+
+  if (!expandable(id)) {
+    d.appendChild(elm("div", "note", "Leaf in this layer — nothing further to open from here."));
+    return;
+  }
+
+  const children = kids(id).filter(branchMatches);
+  const lh = elm("div", "layer-h");
+  lh.appendChild(elm("h2", null, `applies · ${children.length}${children.length !== kids(id).length ? ` of ${kids(id).length}` : ""}`));
+  const tally = elm("div", "tally");
+  const counts = {};
+  for (const k of kids(id)) counts[health(k)] = (counts[health(k)] || 0) + 1;
+  for (const hv of HEALTHS) {
+    if (!counts[hv]) continue;
+    const s = elm("span");
+    s.appendChild(mark(hv));
+    s.appendChild(document.createTextNode(`${counts[hv]} ${hv}`));
+    tally.appendChild(s);
+  }
+  lh.appendChild(tally);
+  d.appendChild(lh);
+
+  if (kids(id).length) {
+    const bar = elm("div", "bar");
+    for (const hv of HEALTHS) {
+      if (!counts[hv]) continue;
+      const seg = elm("i", hv);
+      seg.style.flex = String(counts[hv]);
+      bar.appendChild(seg);
+    }
+    d.appendChild(bar);
+  }
+
+  if (!children.length) {
+    d.appendChild(elm("div", "empty", kids(id).length
+      ? "Nothing in this layer matches the filter."
+      : "Applies nothing — this node reconciled to an empty inventory."));
+    return;
+  }
+
+  const rows = elm("div", "rows");
+  for (const cid of children) {
+    rows.appendChild(childRow(cid));
+    const cdeps = (G[cid].deps || []);
+    if (cdeps.length) {
+      const sub = elm("div", "subdeps");
+      for (const depId of cdeps) sub.appendChild(depRow(depId));
+      rows.appendChild(sub);
+    }
+  }
+  d.appendChild(rows);
+}
+
+function childRow(id) {
+  const n = G[id];
+  const row = elm("button", "row" + (expandable(id) ? " container" : ""));
+  row.type = "button";
+  row.appendChild(mark(health(id)));
+  const ch = elm("span", "rchev" + (expandable(id) ? "" : " leaf"), "▶");
+  row.appendChild(ch);
+  row.appendChild(elm("span", "rkind", n.kind));
+  row.appendChild(elm("span", "rname", label(id)));
+  row.appendChild(elm("span", "rdetail", n.detail || ""));
+  row.onclick = () => select(id, true);
+  return row;
+}
+
+function depRow(id) {
+  const n = G[id];
+  const row = elm("button", "dep");
+  row.type = "button";
+  row.appendChild(mark(health(id)));
+  row.appendChild(elm("span", "rkind", n.kind));
+  const name = elm("span", "rname", label(id));
+  row.appendChild(name);
+  row.appendChild(elm("span", "rdetail", n.detail || (n.fields && n.fields[0] ? n.fields[0][1] : "")));
+  row.onclick = () => select(id, false);
+  return row;
+}
+
+// ---- filter --------------------------------------------------------------
+
+function buildHealthFilter() {
+  const box = $("#hf");
+  for (const hv of ["healthy", "pending", "unhealthy"]) {
+    const b = elm("button", "hf");
+    b.type = "button";
+    b.setAttribute("aria-pressed", "true");
+    b.appendChild(mark(hv));
+    b.appendChild(document.createTextNode(hv));
+    b.onclick = () => {
+      if (ui.hidden.has(hv)) ui.hidden.delete(hv); else ui.hidden.add(hv);
+      b.setAttribute("aria-pressed", String(!ui.hidden.has(hv)));
+      renderTree(); renderDetail();
+    };
+    box.appendChild(b);
+  }
+}
+
+$("#q").oninput = (e) => { ui.q = e.target.value.trim(); renderTree(); renderDetail(); };
+$("#drawer").onclick = () => {
+  const open = $("#tree").classList.toggle("open");
+  $("#drawer").setAttribute("aria-expanded", String(open));
+};
+
+buildHealthFilter();
+renderTree();
+renderDetail();
+</script>
