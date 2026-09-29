@@ -136,14 +136,34 @@ request in a `memoGetter` (one layer asks for the same shared source many times;
 for **one request only**, because caching across requests would serve stale health), and
 resolves a layer's entries concurrently through a bounded pool (`layerConcurrency`).
 
-The frontend keeps **the URL as the source of truth for where the user is**:
-`state.trail` is a projection of `?p=<hop>~<hop>…` (a hop is `type:ns:name`, or
-`domain:type:ns:name` off the `kubernetes` default), every navigation pushes a
-history entry, and `popstate` re-reads the URL — so a shared link and a Back press
-render identically. A trail is restored without resolving its intermediate hops
-(labels are derived from the type, mirroring `friendlyLabel`), and going back
-**re-resolves**: caching a visited layer client-side would serve stale health, the
-same reason the server memo lives for one request only.
+The frontend is a **tree pane plus a node pane**. The tree holds every branch the user
+has expanded (`tree.nodes`: refKey → `{node, at}`); the node pane shows the selected
+reference. Expanding and selecting are separate: the twisty resolves one reference and
+reveals its children without touching the node pane, the row label selects. Only
+selection is a navigation, so expanding adds no history entry.
+
+The URL stays **the source of truth for where the user is**: `state.trail` is a
+projection of `?p=<hop>~<hop>…` (a hop is `type:ns:name`, or `domain:type:ns:name` off
+the `kubernetes` default) and holds the path to the **selected** node — open branches
+are deliberately not in the address. Every navigation pushes a history entry and
+`popstate` re-reads the URL, so a shared link and a Back press render identically. A
+trail is restored without resolving its intermediate hops: they are drawn as a *spine*
+in the tree from their own identifiers (labels derived from the type, mirroring
+`friendlyLabel`), carrying no health mark, and only the selected node is resolved.
+
+Because the tree keeps fetched layers on screen, the old "never hold a layer" rule
+became **never show held material as current**: selecting always re-resolves (the node
+pane is never rendered from `tree.nodes`), every held branch shows the age of its read
+with a re-read control, and collapsing discards what the branch held. That is why going
+back still re-resolves, the same reason the server memo lives for one request only.
+
+The tree walk carries a `seen` set of the keys on the current path: the Flux bootstrap
+Kustomization applies itself, and a repeat is rendered as a leaf pointer (`↩`) instead
+of being descended into — the same guard the engine's `visited` map provides.
+
+The name and health filters narrow the tree and the open layer over material already
+fetched — never a call — and a branch is kept when anything under it matches, so
+filtering cannot hide the path to a match.
 
 `dropNestedDuplicates` enforces, in the UI only, that a layer shows each reference once: a row
 already displayed as another entry's nested dependency is dropped, unless it carries its own

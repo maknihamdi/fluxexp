@@ -7,22 +7,24 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">flux<span>exp</span></div>
+  <header class="rail">
+    <button id="drawer" class="drawer-btn" type="button" aria-expanded="false" aria-controls="tree">☰ tree</button>
+    <div class="brand">flux<i>exp</i></div>
+    <div class="sep" aria-hidden="true"></div>
     <div class="ctx">
-      <label for="context">context</label>
+      <label class="lbl" for="context">context</label>
       <select id="context"></select>
-      <span id="ctx-active" class="ctx-active"></span>
+    </div>
+    <div class="filter">
+      <input id="q" class="field" type="search" placeholder="filter by name…" aria-label="Filter by kind, namespace or name">
+      <div id="hfilter" class="hfilter" role="group" aria-label="Filter by health"></div>
     </div>
   </header>
 
-  <main id="main">
-    <nav id="breadcrumb" class="breadcrumb" hidden>
-      <button id="up" class="up" type="button" title="Go up to the parent">↑ parent</button>
-      <span id="crumbs" class="crumbs"></span>
-    </nav>
-    <div id="view"></div>
-  </main>
+  <div class="shell">
+    <nav id="tree" class="tree" aria-label="Resource tree"></nav>
+    <main class="detail"><div id="view" class="detail-inner"></div></main>
+  </div>
 
   <div id="toast" class="toast" hidden></div>
 

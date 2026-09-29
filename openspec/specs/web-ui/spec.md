@@ -38,21 +38,26 @@ target. All data shown MUST reflect the selected context.
 
 ### Requirement: Root Kustomizations home
 
-The portal's home SHALL list the root Flux Kustomizations for the selected
-context (by default those in the `flux` namespace, with an option to widen the
-scope). Each entry MUST show its health and useful information: source reference,
-path, last applied revision, reconcile interval, last transition time, and the
-Ready message.
+The portal's entry point SHALL be the root level of the tree: the root Flux Kustomizations
+for the selected context (by default those in the `flux` namespace, with an option to widen
+the scope), each shown with its health. Selecting one MUST open it in the node view, where
+its useful information is shown: source reference, path, last applied revision, reconcile
+interval, last transition time, and the Ready message.
 
-#### Scenario: Home lists root Kustomizations with state and info
+#### Scenario: The root level lists the root Kustomizations with their health
 
-- **WHEN** the user opens the home for a context
-- **THEN** each root Kustomization is shown with its health and its source, path, applied revision, interval, last transition time and message
+- **WHEN** the user opens the portal for a context
+- **THEN** the tree's root level shows the root Kustomizations, each with its health
+
+#### Scenario: Selecting a root shows its information
+
+- **WHEN** the user selects a root Kustomization
+- **THEN** the node view shows its health and its source, path, applied revision, interval, last transition time and message
 
 #### Scenario: Unhealthy root is visually distinct
 
 - **WHEN** a root Kustomization is not Ready
-- **THEN** it is rendered as unhealthy with its failure message visible
+- **THEN** it is rendered as unhealthy at the root level, and its failure message is visible when it is selected
 
 ### Requirement: Layer-by-layer exploration
 
@@ -87,17 +92,17 @@ an error node with its reason.
 
 ### Requirement: Drill-in trail and new exploration
 
-The portal SHALL support two navigation modes. In **drill-in** mode the user
-stays on the current page and the path traversed is kept as a breadcrumb trail
-so they can see and return to where they came from; that trail MUST be reflected
-in the page URL, so it survives a reload and can be shared. Alternatively the
-user MAY **open a new exploration**, which starts a fresh page — addressed by
-that resource's own exploration URL — and leaves the current one.
+The portal SHALL support two navigation modes. In **drill-in** mode the user stays on the
+current page: the path traversed is kept in the tree, where every level from the root down
+to the selected node stays visible and selectable, so they can see and return to where they
+came from. That path MUST be reflected in the page URL, so it survives a reload and can be
+shared. Alternatively the user MAY **open a new exploration**, which starts a fresh page —
+addressed by that resource's own exploration URL — and leaves the current one.
 
-#### Scenario: Drill-in keeps a breadcrumb trail
+#### Scenario: Drill-in keeps the path visible
 
 - **WHEN** the user drills from a root into a child and then a grandchild on the same page
-- **THEN** a breadcrumb shows the path root → child → grandchild and lets the user navigate back to any prior level
+- **THEN** the tree shows root → child → grandchild as a path, and selecting any of them returns to that level
 
 #### Scenario: New exploration starts fresh
 
@@ -108,6 +113,39 @@ that resource's own exploration URL — and leaves the current one.
 
 - **WHEN** a new exploration is opened from a resource
 - **THEN** its page carries that resource's exploration URL, so it can be reloaded and shared like any other
+
+### Requirement: Health is encoded by shape as well as colour
+
+Wherever the portal shows health, the mark SHALL differ in **shape** between the five values
+as well as in colour, so the values remain distinguishable to a colour-blind reader and in a
+greyscale rendering. The same mark MUST be used for a given health value everywhere it
+appears.
+
+#### Scenario: Health values differ without colour
+
+- **WHEN** a layer mixing healthy, pending and unhealthy references is rendered without colour
+- **THEN** the three remain distinguishable by the shape of their marks
+
+#### Scenario: One mark per value across the portal
+
+- **WHEN** the same reference appears in the tree, in a list of children and as a dependency
+- **THEN** it carries the same health mark in all three places
+
+### Requirement: Interaction colour is separate from health colour
+
+The portal SHALL reserve its accent colour for interaction — selection, focus, hover, links
+— and MUST NOT use the health palette for any of them, so a coloured element always means
+what it appears to mean.
+
+#### Scenario: A selected healthy row is not confused with a state
+
+- **WHEN** the user selects a row
+- **THEN** the selection is shown in the accent colour, distinct from any health colour on that row
+
+#### Scenario: Focus is visible
+
+- **WHEN** the user moves keyboard focus onto a row or a control
+- **THEN** it carries a visible focus indicator in the accent colour
 
 ### Requirement: Context-change indication
 
@@ -121,19 +159,19 @@ context than the one being explored, rather than silently crossing contexts.
 
 ### Requirement: Freshness on the roots home
 
-The roots home SHALL show each root Kustomization's freshness as a badge distinct
-from its health badge, together with the short applied revision and the synced
-time, so a user can tell at a glance whether it is up to date.
+The root level SHALL show each root Kustomization's freshness distinctly from its health,
+and selecting a root SHALL show its freshness together with the short applied revision and
+the synced time, so a user can tell whether it is up to date.
 
 #### Scenario: Root shows a freshness badge and applied sha
 
-- **WHEN** the roots home lists a Kustomization that is up to date
-- **THEN** it shows an up-to-date freshness badge alongside the health badge, plus the short applied revision and the synced time
+- **WHEN** the user selects a root Kustomization that is up to date
+- **THEN** the node view shows an up-to-date freshness badge alongside the health, plus the short applied revision and the synced time
 
 #### Scenario: Behind root is visually distinct
 
 - **WHEN** a root Kustomization is behind its source
-- **THEN** its freshness badge reads behind and is visually distinct from up-to-date
+- **THEN** its freshness reads behind and is visually distinct from up-to-date, and from its health
 
 ### Requirement: Freshness and fields in the node view
 
@@ -171,20 +209,20 @@ its children, each carrying health, detail and fields.
 
 ### Requirement: Expandable children are visually marked
 
-The portal SHALL mark an expandable child with a chevron before its name and an
-accent on its card, visually distinct from the health and freshness badges, so a
-user can tell at a glance which children are worth opening. A non-expandable
-child MUST NOT carry the marker.
+The portal SHALL mark an expandable reference — in the tree and in the node view's list of
+children — with an expansion control and an emphasis distinct from the health and freshness
+marks, so a user can tell at a glance which references are worth opening. A non-expandable
+reference MUST NOT carry the marker, and its expansion control MUST NOT be offered.
 
 #### Scenario: Container child is marked
 
-- **WHEN** a revealed layer contains an expandable child
-- **THEN** that child's card shows the chevron and the accent
+- **WHEN** a layer contains an expandable child
+- **THEN** that child's row shows the expansion control and the emphasis
 
 #### Scenario: Leaf child is not marked
 
-- **WHEN** a revealed layer contains a non-expandable child such as a ConfigMap
-- **THEN** that child's card shows neither the chevron nor the accent
+- **WHEN** a layer contains a non-expandable child such as a ConfigMap
+- **THEN** that child's row shows neither, and offers no way to expand it
 
 ### Requirement: Kustomization and its dependencies render as one card
 
@@ -351,11 +389,12 @@ type, so a shared link cannot show a stale label.
 
 ### Requirement: Browser history navigates the exploration trail
 
-The portal SHALL add a browser history entry for each navigation it performs:
-drilling into a row or a dependency, jumping to an entry of the breadcrumb,
-moving up to the parent, switching context. Using the browser's Back and Forward
-controls MUST move along the exploration trail and MUST NOT leave the portal,
-with the rendered view always matching the URL being restored.
+The portal SHALL add a browser history entry for each navigation it performs: selecting a
+row in the tree, selecting a child or a dependency in the node view, moving up to the
+parent, switching context. Expanding or collapsing a branch is not a navigation and MUST
+NOT add a history entry. Using the browser's Back and Forward controls MUST move along the
+exploration trail and MUST NOT leave the portal, with the rendered view always matching the
+URL being restored.
 
 #### Scenario: Back returns to the previous node
 
@@ -367,10 +406,15 @@ with the rendered view always matching the URL being restored.
 - **WHEN** the user presses Back and then Forward
 - **THEN** the portal renders the node they had left
 
+#### Scenario: Expanding does not enter history
+
+- **WHEN** the user expands three branches in the tree and then presses Back
+- **THEN** the portal returns to the node visited before the current one, not to an earlier expansion state
+
 #### Scenario: History and URL never disagree
 
 - **WHEN** any history entry is restored
-- **THEN** the rendered breadcrumb and current node are those encoded in that entry's URL
+- **THEN** the rendered path and selected node are those encoded in that entry's URL
 
 ### Requirement: Up-to-parent control
 
@@ -402,18 +446,18 @@ NOT be offered.
 
 ### Requirement: Pending status is visually distinct
 
-The portal SHALL render a **pending** node with a health badge visually distinct from
-healthy, unhealthy, unknown and error, wherever a health badge appears — the roots
-home, a revealed layer, a node's own header, and a listed dependency. A pending node
-MUST NOT read as healthy, so a reader scanning a layer can tell an object that is
-still converging from one that is working.
+The portal SHALL render a **pending** reference with a health mark visually distinct from
+healthy, unhealthy, unknown and error, wherever health appears — the tree, the node view's
+header, its list of children, and a listed dependency. A pending reference MUST NOT read as
+healthy, so a reader scanning a layer can tell an object that is still converging from one
+that is working.
 
 #### Scenario: A pending object is distinguishable in a layer
 
-- **WHEN** a revealed layer contains a pending object alongside healthy and unhealthy ones
-- **THEN** the pending object's badge differs from both, and it does not read as healthy
+- **WHEN** a layer contains a pending object alongside healthy and unhealthy ones
+- **THEN** the pending object's mark differs from both, and it does not read as healthy
 
-#### Scenario: A pending root shows its badge on the home
+#### Scenario: A pending root is distinguishable in the tree
 
 - **WHEN** a root Kustomization's status is pending
-- **THEN** the roots home shows it with the pending badge and its detail message
+- **THEN** its tree row carries the pending mark, and its detail message is shown when it is selected
