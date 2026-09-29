@@ -110,6 +110,8 @@ func glyph(h engine.Health) string {
 		return "✔"
 	case engine.Unhealthy:
 		return "✖"
+	case engine.Pending:
+		return "⧗"
 	case engine.Error:
 		return "!"
 	default:

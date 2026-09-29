@@ -64,19 +64,26 @@ reachable.
 ### Requirement: Tree rendering with health
 
 The command SHALL render the resolved graph as an indented tree. Each node MUST
-show its domain, type, coordinates (e.g. namespace/name), and health status.
-Error nodes MUST be visually distinguishable and MUST show their failure reason.
-An **expandable** node MUST carry a leading chevron marker, and non-expandable
-nodes MUST reserve the same width so that labels stay column-aligned. A node's
-children MUST be listed in the shared three-tier order: Flux objects, then other
-expandable children, then the rest. A node's **dependencies** MUST be rendered
-before its children, each carrying a marker distinguishing it from an expandable
-child, so a reader can tell what the node requires from what it produces.
+show its domain, type, coordinates (e.g. namespace/name), and health status. Each
+health value — healthy, unhealthy, **pending**, unknown and error — MUST carry its own
+glyph, so pending is not confused with any other status. Error nodes MUST be visually
+distinguishable and MUST show their failure reason. An **expandable** node MUST carry a
+leading chevron marker, and non-expandable nodes MUST reserve the same width so that
+labels stay column-aligned. A node's children MUST be listed in the shared three-tier
+order: Flux objects, then other expandable children, then the rest. A node's
+**dependencies** MUST be rendered before its children, each carrying a marker
+distinguishing it from an expandable child, so a reader can tell what the node
+requires from what it produces.
 
 #### Scenario: Tree shows nodes with health
 
 - **WHEN** the traversal produces a root with nested children of varying health
 - **THEN** the output is an indented tree where each line shows the node's domain, type, coordinates, and health status
+
+#### Scenario: Pending node has its own glyph
+
+- **WHEN** the tree contains a pending node alongside healthy, unhealthy and unknown siblings
+- **THEN** the pending node's glyph differs from all three
 
 #### Scenario: Error node shows its reason
 
@@ -92,8 +99,6 @@ child, so a reader can tell what the node requires from what it produces.
 
 - **WHEN** a node's children mix Flux objects, other expandable references, and leaves
 - **THEN** the Flux objects are printed first, then the other containers, then the leaves, each tier keeping its original relative order
-
-
 
 #### Scenario: Dependencies are rendered before children with their own marker
 

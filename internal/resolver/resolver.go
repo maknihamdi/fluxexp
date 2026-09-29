@@ -131,25 +131,5 @@ func readyCondition(obj *unstructured.Unstructured) (status, message string, fou
 	return "", "", false
 }
 
-// K8sHealth derives a domain-independent Health from a Kubernetes object's
-// Ready condition. It is the single source of the Ready-condition health logic,
-// shared by the generic resolver and the list command.
-func K8sHealth(obj *unstructured.Unstructured) (engine.Health, string) {
-	return healthFromReady(obj)
-}
-
-// healthFromReady maps a Ready condition status to a domain-independent Health.
-func healthFromReady(obj *unstructured.Unstructured) (engine.Health, string) {
-	status, message, found := readyCondition(obj)
-	if !found {
-		return engine.Unknown, ""
-	}
-	switch status {
-	case "True":
-		return engine.Healthy, message
-	case "False":
-		return engine.Unhealthy, message
-	default:
-		return engine.Unknown, message
-	}
-}
+// K8sHealth lives in status.go: health derivation is a subject of its own, and
+// keeping it there keeps this file to the reference encoding and the contract.

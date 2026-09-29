@@ -49,20 +49,10 @@ func (WorkloadResolver) Resolve(ctx context.Context, rc *ResolveContext, ref eng
 	}
 	_, kind, _, _, _ := DecodeK8sRef(ref)
 
-	var health engine.Health
-	var detail string
-	switch kind {
-	case "Deployment", "StatefulSet", "ReplicaSet":
-		health, detail = replicaHealth(obj)
-	case "DaemonSet":
-		health, detail = daemonSetHealth(obj)
-	case "Pod":
-		health, detail = podHealth(obj)
-	case "Job":
-		health, detail = jobHealth(obj)
-	default:
-		health = engine.Unknown
-	}
+	// The kind-specific rules below live in workloadHealth, which K8sHealth also
+	// consults. Going through the shared entry point is what keeps a Pod from
+	// reading pending here and unhealthy in a UI layer that only lists it.
+	health, detail := K8sHealth(obj)
 
 	children, extra, err := workloadChildren(ctx, rc, obj, ref, kind)
 	if err != nil {
@@ -152,7 +142,14 @@ func groupOf(apiVersion string) string {
 }
 
 // replicaHealth compares ready replicas to the desired count.
+//
+// It asks the shared generation check first: until the controller has observed
+// the current spec, the replica counts still describe the previous one, and
+// reporting "0/3 ready" as broken would blame a rollout for not having started.
 func replicaHealth(obj *unstructured.Unstructured) (engine.Health, string) {
+	if detail, drifting := GenerationDrift(obj); drifting {
+		return engine.Pending, detail
+	}
 	desired := int64(1)
 	if v, ok := nestedInt(obj, "spec", "replicas"); ok {
 		desired = v
@@ -179,7 +176,44 @@ func daemonSetHealth(obj *unstructured.Unstructured) (engine.Health, string) {
 	return engine.Unhealthy, detail
 }
 
+// workloadHealth answers for the kinds this resolver claims, reporting ok=false
+// for anything else so the caller keeps its own verdict.
+//
+// It dispatches on the object rather than on a reference because K8sHealth is
+// also reached from surfaces that hold an object and no resolver — the UI's
+// listed entries. Both paths must reach the same rules: these counts and phases
+// say more than kstatus's generic phrasing ("0/3 ready" against "Deployment is
+// not available"), and a kind must not have two verdicts depending on which
+// surface asked.
+func workloadHealth(obj *unstructured.Unstructured) (engine.Health, string, bool) {
+	kinds, known := workloadKinds[groupOf(obj.GetAPIVersion())]
+	kind := obj.GetKind()
+	if !known || !kinds[kind] {
+		return "", "", false
+	}
+	switch kind {
+	case "Deployment", "StatefulSet", "ReplicaSet":
+		health, detail := replicaHealth(obj)
+		return health, detail, true
+	case "DaemonSet":
+		health, detail := daemonSetHealth(obj)
+		return health, detail, true
+	case "Pod":
+		health, detail := podHealth(obj)
+		return health, detail, true
+	case "Job":
+		health, detail := jobHealth(obj)
+		return health, detail, true
+	}
+	return "", "", false
+}
+
 // podHealth derives health from the pod phase and Ready condition.
+//
+// Only the `Unknown` phase yields unknown, and it earns it: that phase means
+// the API server lost contact with the node, so the pod's state genuinely
+// cannot be read. A `Pending` pod is readable — it is scheduling or pulling
+// images — and is reported as pending.
 func podHealth(obj *unstructured.Unstructured) (engine.Health, string) {
 	phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
 	switch phase {
@@ -192,12 +226,15 @@ func podHealth(obj *unstructured.Unstructured) (engine.Health, string) {
 		return engine.Healthy, phase
 	case "Failed":
 		return engine.Unhealthy, phase
+	case "Pending":
+		return engine.Pending, phase
 	default:
 		return engine.Unknown, phase
 	}
 }
 
-// jobHealth reads the Complete/Failed conditions.
+// jobHealth reads the Complete/Failed conditions. A job that has neither is
+// still running: work in flight, not an unreadable state.
 func jobHealth(obj *unstructured.Unstructured) (engine.Health, string) {
 	if conditionTrue(obj, "Complete") {
 		return engine.Healthy, "complete"
@@ -205,7 +242,7 @@ func jobHealth(obj *unstructured.Unstructured) (engine.Health, string) {
 	if conditionTrue(obj, "Failed") {
 		return engine.Unhealthy, "failed"
 	}
-	return engine.Unknown, "running"
+	return engine.Pending, "running"
 }
 
 // nestedInt reads an integer status/spec field tolerantly (int64 in unstructured).

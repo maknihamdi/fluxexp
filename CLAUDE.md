@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `fluxexp` is a Go CLI (plus an embedded local web portal) that traverses the **full**
 dependency graph of resources reconciled by FluxCD — from a starting Flux object down to
-the concrete resources it ultimately produces — reporting health along the way. Where the
+the concrete resources it ulx@timately produces — reporting health along the way. Where the
 `flux` CLI stops at the Flux object boundary, `fluxexp` keeps following the chain
 (Kustomization → inventory → HelmRelease → chart objects → Deployment → ReplicaSet → Pod),
 and is designed to cross **backends** mid-graph (Kubernetes today, GCP or others later).
@@ -76,7 +76,32 @@ dependencies from `spec.sourceRef` + `spec.dependsOn`; reconciliation freshness)
 conditions, descent via `ownerReferences`: Deployment → active ReplicaSet → Pods),
 `FluxObjectResolver` (the `source.` and `image.toolkit.fluxcd.io` kinds — leaves, but they
 surface repository / tracked ref / interval / scanned image / selected tag),
-`GenericK8sResolver` (domain fallback: `Ready` condition, no children).
+`GenericK8sResolver` (domain fallback: the shared status derivation, no children).
+
+**`internal/resolver/status.go` is the whole of Kubernetes health derivation.** `K8sHealth(obj)`
+is the only function that decides what an object's state means, and every surface goes through
+it. Its base verdict comes from `kstatus` (`sigs.k8s.io/cli-utils`), the library Flux uses for
+its own health checks, with three deliberate layers on top:
+
+- **A condition-polarity table**, consulted only when kstatus returns a *generic* `Current` —
+  meaning it recognised neither the kind nor any of the three condition types it knows
+  (`Reconciling`, `Stalled`, `Ready`). Without it a `Bundle` with `Synced=False` renders green,
+  and a false green is worse than an `unknown` because it never invites a second look. Polarity
+  cannot be inferred: `Degraded=False` is good news and `Synced=False` is bad news, and both are
+  just a type and a status. New condition types are one line each.
+- **`Ready=False` is `unhealthy`**, where kstatus says in-progress. This is the one place
+  fluxexp knowingly disagrees with flux; without it every broken Certificate turns amber.
+- **Generation drift** (`metadata.generation` > `status.observedGeneration`) is `pending` and is
+  checked *first*: everything else the status says describes a superseded spec.
+
+The workload rules (replica counts, Pod phase, Job conditions) live in `workload.go` beside the
+resolver that descends those kinds, but `K8sHealth` dispatches to them through `workloadHealth`.
+That indirection is load-bearing: the CLI resolves a Pod through `WorkloadResolver` while a UI
+layer merely lists it and derives health from the fetched object, and the two must not reach
+different verdicts for the same Pod.
+
+An object with no `.status` at all is **healthy** — existing is the whole of what a ClusterRole
+or a ConfigMap can do, and that family alone was 40% of a real cluster's inventory.
 
 Two helpers exist so a surface holding an object can read more from it **without a second
 call**: `FieldsForFetched(ref, obj)` and `DependencyRefsForFetched(ref, obj)`. A Kustomization's
@@ -132,9 +157,17 @@ only when the *root* fails to resolve; deeper failures are rendered inline as er
 
 - Traversal is strictly read-only; nothing in the graph path mutates cluster state.
 - Partial failure is a first-class result, not an abort.
-- Health/freshness derivation for Kubernetes lives in `resolver` (`K8sHealth`,
+- Health/freshness derivation for Kubernetes lives in `resolver` (`K8sHealth` in `status.go`,
   `KustomizationFreshness`) and is shared by the CLI, the `list` command, and the UI — don't
-  reimplement Ready-condition logic at a call site.
+  reimplement condition reading, generation comparison or replica counting at a call site. A
+  kind with rules of its own registers them in `workloadHealth`, not at the surface that
+  happens to ask.
+- **Every object gets a status; `unknown` is a last resort, never a default.** It is reserved
+  for state the system genuinely cannot read — a status kstatus fails to parse, a Pod whose
+  node stopped reporting. "Nothing to say" is `healthy`, "not there yet" is `pending`.
+- `Pending` is the fifth health value and separates three meanings `unknown` used to conflate:
+  nothing to know, not yet reconciled, cannot be read. It covers generation drift,
+  `Reconciling=True`, termination, a `Pending` Pod and a running Job.
 - `Freshness` (up-to-date / behind / failed / suspended) is a status **distinct from health**,
   set only by resolvers that can compute it; empty means "not applicable". Precedence:
   suspended > failed > up-to-date > behind. It is never claimed for a listed entry, because
@@ -167,6 +200,17 @@ Table-driven, no live cluster. `internal/resolver/fake_test.go` holds the shared
 cluster through `newService`. `internal/resolver/freshness.go` has an overridable `now` var for
 deterministic relative times.
 
+Two things a test object must get right, both because health derivation now runs through
+kstatus:
+
+- **Integers must be `int64` literals.** kstatus reads `metadata.generation` and
+  `status.observedGeneration` with unstructured's typed accessors and fails hard on anything
+  else ("1 is of the type float64, expected int64"). `encoding/json` produces exactly that
+  `float64`, so decode any fixture with `k8s.io/apimachinery/pkg/util/json`.
+- **`apiVersion` and `kind` must be set.** Derivation dispatches on them to find the kind's
+  rules, so a workload fixture without them is not a workload and silently falls through to the
+  generic path.
+
 ## Spec-driven workflow (OpenSpec)
 
 This repo is developed spec-first with the OpenSpec CLI (`openspec`, v1.3.1) and the skills in
@@ -180,6 +224,8 @@ This repo is developed spec-first with the OpenSpec CLI (`openspec`, v1.3.1) and
 - `openspec/changes/<name>/` — an active change (proposal, design, tasks, spec deltas);
   archived under `openspec/changes/archive/<date>-<name>/` once implemented.
 
-Work is delivered in numbered increments (I1…I6 done, see the README roadmap). A feature
+Work is delivered in numbered increments (I1…I10 done, see the README roadmap). A feature
 lands as: propose a change → implement its tasks → archive the change, which folds its spec
 deltas into `openspec/specs/`. Prefer that flow over ad-hoc edits for anything behavioral.
+
+Utilise les skills openspec pour explorer, proposer et appliquer des changements. 

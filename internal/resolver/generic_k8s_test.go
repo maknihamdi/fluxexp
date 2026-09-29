@@ -27,7 +27,10 @@ func TestGenericK8s_ReadyStates(t *testing.T) {
 	}{
 		{"ready true -> healthy", "true", engine.Healthy},
 		{"ready false -> unhealthy", "false", engine.Unhealthy},
-		{"no condition -> unknown", "none", engine.Unknown},
+		// An object with nothing to report is applied and present, which is the
+		// whole of what can be known about it. It used to read unknown, which
+		// said "look at me" about 40% of a Kustomization's inventory.
+		{"no condition -> healthy", "none", engine.Healthy},
 	}
 
 	getter := fakeGetter{objs: map[string]*unstructured.Unstructured{

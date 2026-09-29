@@ -60,6 +60,31 @@ func TestTree_ErrorNodeShowsReason(t *testing.T) {
 	}
 }
 
+// A pending node must not be mistaken for any of its siblings at a glance,
+// which is the whole reason it is a status of its own rather than a detail.
+func TestTree_PendingNodeHasItsOwnGlyph(t *testing.T) {
+	seen := map[string]engine.Health{}
+	for _, h := range []engine.Health{engine.Healthy, engine.Unhealthy, engine.Pending, engine.Unknown, engine.Error} {
+		g := glyph(h)
+		if other, clash := seen[g]; clash {
+			t.Fatalf("health %q and %q share the glyph %q", h, other, g)
+		}
+		seen[g] = h
+	}
+
+	root := &engine.Node{
+		Ref:    k8sRef("Kustomization", "flux-system", "apps"),
+		Health: engine.Healthy,
+		Children: []*engine.Node{
+			{Ref: k8sRef("Deployment", "team-a", "web"), Health: engine.Pending, Detail: "generation 4, observed 3"},
+		},
+	}
+	out := Tree(root)
+	if !strings.Contains(out, "[pending]") || !strings.Contains(out, "generation 4, observed 3") {
+		t.Fatalf("pending node must show its status and detail:\n%s", out)
+	}
+}
+
 func TestTree_VisitedAnnotated(t *testing.T) {
 	root := &engine.Node{
 		Ref:    k8sRef("Node", "", "a"),

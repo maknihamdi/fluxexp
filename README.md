@@ -102,6 +102,16 @@ dependencies nested inside it, and what it applies listed below.
   HelmRelease shows that group without being resolved, so no Helm storage Secret
   is read to draw a row. A `chartRef`-style release continues one hop — release →
   HelmChart → HelmRepository — and the HelmChart gains the fields it never had.
+- **I10 (done)**: a status for every object. A Kustomization's inventory is full
+  of kinds nothing knew how to read — 67% of a real cluster's 255 entries showed
+  `unknown`. Health derivation now runs through `kstatus`, the library Flux uses
+  itself, with a condition-polarity layer on top so a `Bundle` with
+  `Synced=False` renders red rather than green. **Expect a visible shift**: most
+  former `unknown`s become `healthy` (a ClusterRole has nothing to report, and
+  existing is all it can do), and a new fifth status, **`pending`**, takes the
+  cases that were neither working nor broken — a controller that has not yet
+  observed the current spec, a Pod still scheduling, a running Job. On the
+  measured cluster: 642 nodes, zero `unknown`.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 
