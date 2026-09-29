@@ -47,10 +47,23 @@ func (FluxObjectResolver) Resolve(ctx context.Context, rc *ResolveContext, ref e
 	health, detail := K8sHealth(obj)
 
 	return engine.Result{
-		Health: health,
-		Detail: detail,
-		Fields: fluxObjectFields(obj, kind),
+		Health:       health,
+		Detail:       detail,
+		Fields:       fluxObjectFields(obj, kind),
+		Dependencies: DependencyRefsForFetched(ref, obj),
 	}, nil
+}
+
+// helmChartDependencies returns the repository a HelmChart pulls from. A
+// HelmChart is the one Flux source kind that has a source of its own: a
+// HelmRelease using spec.chartRef points at it, and the repository is one hop
+// further. Without this the chain stops at the chart and the reader never learns
+// where it comes from.
+func helmChartDependencies(hc *unstructured.Unstructured, ns string) []engine.Ref {
+	if src, ok := sourceRefAt(hc, ns, "spec", "sourceRef"); ok {
+		return []engine.Ref{src}
+	}
+	return nil
 }
 
 // FieldsForFetched returns the fields computable from an object a caller has
@@ -106,6 +119,15 @@ func fluxObjectFields(obj *unstructured.Unstructured, kind string) []engine.Fiel
 	case "Bucket":
 		add("Bucket", spec("bucketName"), "")
 		add("Endpoint", spec("endpoint"), "")
+		add("Interval", humanizeInterval(spec("interval")), "")
+
+	case "HelmChart":
+		add("Chart", spec("chart"), "")
+		add("Version", spec("version"), "")
+		srcKind, srcName := spec("sourceRef", "kind"), spec("sourceRef", "name")
+		if srcKind != "" && srcName != "" {
+			add("Source", srcKind+"/"+srcName, "")
+		}
 		add("Interval", humanizeInterval(spec("interval")), "")
 
 	case "HelmRepository":

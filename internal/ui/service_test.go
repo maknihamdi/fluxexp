@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/maknihamdi/fluxexp/internal/engine"
@@ -13,18 +14,38 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// fakeCluster implements the ui.cluster interface for tests.
+// fakeCluster implements the ui.cluster interface for tests. It records the keys
+// asked for, so a test can pin what a layer does *not* retrieve.
 type fakeCluster struct {
 	objs          map[string]*unstructured.Unstructured  // "kind|ns|name"
 	lists         map[string][]unstructured.Unstructured // "kind|ns"
 	clusterScoped map[string]bool
+
+	mu   sync.Mutex // a layer's entries are fetched concurrently
+	gets []string
 }
 
 func (f *fakeCluster) Get(_ context.Context, _ /*apiVersion*/, kind, ns, name string) (*unstructured.Unstructured, error) {
-	if o, ok := f.objs[kind+"|"+ns+"|"+name]; ok {
+	key := kind + "|" + ns + "|" + name
+	f.mu.Lock()
+	f.gets = append(f.gets, key)
+	f.mu.Unlock()
+	if o, ok := f.objs[key]; ok {
 		return o, nil
 	}
 	return nil, fmt.Errorf("not found: %s/%s/%s", kind, ns, name)
+}
+
+// fetched reports whether the cluster was asked for a "kind|ns|name" key.
+func (f *fakeCluster) fetched(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, g := range f.gets {
+		if g == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeCluster) Namespaced(_ /*apiVersion*/, kind string) (bool, error) {
