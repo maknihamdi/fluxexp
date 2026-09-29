@@ -477,3 +477,101 @@ func TestDropNestedDuplicates_NoOverlapIsUntouched(t *testing.T) {
 		t.Errorf("a layer with no overlap must be untouched, got %d", len(got))
 	}
 }
+
+// helmReleaseWithSource builds a HelmRelease that pulls its chart from a
+// HelmRepository and waits on another release, with a stored release in history
+// (so resolving it would read a Helm storage Secret).
+func helmReleaseWithSource(ns, name, repo string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"namespace": ns, "name": name},
+		"spec": map[string]interface{}{
+			"chart": map[string]interface{}{
+				"spec": map[string]interface{}{
+					"chart":     name,
+					"sourceRef": map[string]interface{}{"kind": "HelmRepository", "name": repo},
+				},
+			},
+			"dependsOn": []interface{}{map[string]interface{}{"name": "base"}},
+		},
+		"status": map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{"type": "Ready", "status": "True", "message": "release deployed"},
+			},
+			"history": []interface{}{
+				map[string]interface{}{"name": name, "namespace": ns, "version": int64(3)},
+			},
+		},
+	}}
+}
+
+func helmRepo(ns, name, url string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"namespace": ns, "name": name},
+		"spec":     map[string]interface{}{"url": url, "interval": "1m"},
+		"status": map[string]interface{}{
+			"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "True"}},
+		},
+	}}
+}
+
+// helmService is a Kustomization applying a HelmRelease, plus everything the
+// release refers to and the Helm storage Secret a resolve would read.
+func helmService() *fakeCluster {
+	ks := kustomization("apps", "charts")
+	_ = unstructured.SetNestedSlice(ks.Object, []interface{}{
+		map[string]interface{}{"id": "apps_web_helm.toolkit.fluxcd.io_HelmRelease", "v": "v2"},
+	}, "status", "inventory", "entries")
+
+	return &fakeCluster{objs: map[string]*unstructured.Unstructured{
+		"Kustomization|apps|charts":             ks,
+		"GitRepository|apps|flux":               gitRepo("apps", "flux", "main@sha1:abc"),
+		"HelmRelease|apps|web":                  helmReleaseWithSource("apps", "web", "jetstack"),
+		"HelmRepository|apps|jetstack":          helmRepo("apps", "jetstack", "https://charts.jetstack.io"),
+		"HelmRelease|apps|base":                 helmReleaseWithSource("apps", "base", "jetstack"),
+		"Secret|apps|sh.helm.release.v1.web.v3": bare("apps", "sh.helm.release.v1.web.v3"),
+	}}
+}
+
+// TestListedHelmRelease_CarriesItsOwnDependencies pins that a HelmRelease is
+// grouped with what it needs, exactly as a Kustomization is: its chart source
+// first, then what it waits on.
+func TestListedHelmRelease_CarriesItsOwnDependencies(t *testing.T) {
+	fc := helmService()
+	s := newService(func(string) (cluster, error) { return fc, nil })
+
+	node, err := s.Expand("ctx", k8sRefFor("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", "charts"))
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if len(node.Children) != 1 {
+		t.Fatalf("want the HelmRelease as the only child, got %+v", node.Children)
+	}
+	hr := node.Children[0]
+	if len(hr.Dependencies) != 2 {
+		t.Fatalf("the listed HelmRelease should carry its source and its dependsOn, got %+v", hr.Dependencies)
+	}
+	if hr.Dependencies[0].Ref.Name != "jetstack" || hr.Dependencies[0].Ref.Type != "source.toolkit.fluxcd.io/v1|HelmRepository" {
+		t.Errorf("first dependency = %+v, want the HelmRepository source", hr.Dependencies[0].Ref)
+	}
+	if len(hr.Dependencies[0].Fields) == 0 {
+		t.Error("the nested HelmRepository must carry its fields without a click")
+	}
+	if hr.Dependencies[1].Ref.Name != "base" {
+		t.Errorf("second dependency = %q, want the dependsOn entry", hr.Dependencies[1].Ref.Name)
+	}
+}
+
+// TestListedHelmRelease_StorageSecretIsNeverRead pins the reason the derivation
+// works from a fetched object: resolving a HelmRelease reads and gunzips its Helm
+// storage Secret, which listing one must never do.
+func TestListedHelmRelease_StorageSecretIsNeverRead(t *testing.T) {
+	fc := helmService()
+	s := newService(func(string) (cluster, error) { return fc, nil })
+
+	if _, err := s.Expand("ctx", k8sRefFor("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", "charts")); err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if fc.fetched("Secret|apps|sh.helm.release.v1.web.v3") {
+		t.Error("listing a HelmRelease must not read its Helm storage Secret")
+	}
+}

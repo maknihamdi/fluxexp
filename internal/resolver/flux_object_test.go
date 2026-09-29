@@ -279,3 +279,70 @@ func TestFieldsForFetched(t *testing.T) {
 		t.Errorf("a nil object must yield no fields, got %v", f)
 	}
 }
+
+// helmChart builds a HelmChart with a source reference; an empty ns leaves the
+// namespace undeclared.
+func helmChart(chart, version, srcKind, srcName, ns string) *unstructured.Unstructured {
+	src := map[string]interface{}{"kind": srcKind, "name": srcName}
+	if ns != "" {
+		src["namespace"] = ns
+	}
+	return fluxObj(map[string]interface{}{
+		"chart": chart, "version": version, "interval": "2m0s", "sourceRef": src,
+	}, readyStatus("pulled chart"))
+}
+
+func TestFluxObject_HelmChartFields(t *testing.T) {
+	got := fieldMap(fluxObjectFields(helmChart("cluster", "*", "HelmRepository", "infra-repo", ""), "HelmChart"))
+	if got["Chart"] != "cluster" || got["Version"] != "*" || got["Interval"] != "2m" {
+		t.Errorf("helmchart fields = %v", got)
+	}
+	// Where nesting stops, this field is the only thing telling the reader where
+	// the chart comes from.
+	if got["Source"] != "HelmRepository/infra-repo" {
+		t.Errorf("Source = %q, want the declared repository", got["Source"])
+	}
+}
+
+// TestHelmChart_DeclaresItsRepository pins the second hop of a chartRef-style
+// HelmRelease: the release points at a HelmChart, and the repository is the
+// chart's own source.
+func TestHelmChart_DeclaresItsRepository(t *testing.T) {
+	ref := K8sRef(sourceAPIVersion, "HelmChart", "apps", "cluster")
+
+	deps := DependencyRefsForFetched(ref, helmChart("cluster", "*", "HelmRepository", "infra-repo", ""))
+	if len(deps) != 1 || deps[0].Key() != K8sRef(sourceAPIVersion, "HelmRepository", "apps", "infra-repo").Key() {
+		t.Fatalf("want the HelmRepository in the chart's own namespace, got %v", labels(deps))
+	}
+
+	deps = DependencyRefsForFetched(ref, helmChart("cluster", "*", "HelmRepository", "infra-repo", "flux"))
+	if len(deps) != 1 || deps[0].Coords["namespace"] != "flux" {
+		t.Fatalf("an explicit namespace must be honoured, got %v", labels(deps))
+	}
+
+	if deps := DependencyRefsForFetched(ref, fluxObj(map[string]interface{}{"chart": "c"}, nil)); len(deps) != 0 {
+		t.Errorf("a chart without a source declares nothing, got %v", labels(deps))
+	}
+}
+
+// TestHelmChartDependencyRefs_AgreeWithResolver keeps the single-source rule for
+// the kind the Flux object resolver handles.
+func TestHelmChartDependencyRefs_AgreeWithResolver(t *testing.T) {
+	hc := helmChart("cluster", "*", "HelmRepository", "infra-repo", "")
+	ref := K8sRef(sourceAPIVersion, "HelmChart", "apps", "cluster")
+	getter := fakeGetter{objs: map[string]*unstructured.Unstructured{"HelmChart|apps|cluster": hc}}
+
+	res, err := (FluxObjectResolver{}).Resolve(context.Background(), &ResolveContext{K8s: getter}, ref)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	derived := DependencyRefsForFetched(ref, hc)
+	if len(derived) != len(res.Dependencies) {
+		t.Fatalf("derived %d refs, resolver returned %d", len(derived), len(res.Dependencies))
+	}
+	for i := range derived {
+		if derived[i].Key() != res.Dependencies[i].Key() {
+			t.Errorf("position %d: derived %s, resolver %s", i, derived[i].Label(), res.Dependencies[i].Label())
+		}
+	}
+}

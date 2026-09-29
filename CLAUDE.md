@@ -81,7 +81,15 @@ surface repository / tracked ref / interval / scanned image / selected tag),
 Two helpers exist so a surface holding an object can read more from it **without a second
 call**: `FieldsForFetched(ref, obj)` and `DependencyRefsForFetched(ref, obj)`. A Kustomization's
 `sourceRef` and `dependsOn` are in its own manifest, so a listed row never needs to be resolved
-— and its inventory never needs computing — just to show its dependency group. `IsFluxRef`
+— and its inventory never needs computing — just to show its dependency group. The same holds
+for a HelmRelease's chart source and `dependsOn`, where it matters more: resolving one gunzips
+its Helm storage Secret. `DependencyRefsForFetched` lives in `dependencies.go` and **dispatches
+on group + kind** — a new kind that declares dependencies registers there, its derivation staying
+beside its own resolver; kinds absent from the dispatch yield nothing. A HelmChart is in it too:
+a HelmRelease using `spec.chartRef` names a chart, not a repository, so the chain continues one
+hop — release → chart → repository — each hop derived from an object already in hand rather than
+flattened by an extra fetch. Declaring a dependency does not make a kind expandable: the HelmChart
+stays a leaf. `IsFluxRef`
 answers the Flux-group question for ordering; it lives in the ordering helper rather than on the
 `Resolver` interface, because the generic fallback (which handles GitRepository) must stay
 ignorant of any particular ecosystem.

@@ -251,21 +251,30 @@ func TestDependencyRefsForFetched_AgreesWithResolver(t *testing.T) {
 	}
 }
 
-func TestDependencyRefsForFetched_OnlyKustomizations(t *testing.T) {
+// TestDependencyRefsForFetched_KindsWithoutDeclarations covers the kinds the
+// dispatch does not know: they yield nothing even when their manifest happens to
+// carry a sourceRef-shaped field. (Kustomizations and HelmReleases, which do
+// declare dependencies, are covered by their own tests.)
+func TestDependencyRefsForFetched_KindsWithoutDeclarations(t *testing.T) {
 	plain := &unstructured.Unstructured{Object: map[string]interface{}{
 		"spec": map[string]interface{}{"sourceRef": map[string]interface{}{"kind": "GitRepository", "name": "x"}},
 	}}
 	for _, ref := range []engine.Ref{
 		K8sRef("v1", "ConfigMap", "ns", "cfg"),
 		K8sRef("v1", "Pod", "ns", "p"),
-		K8sRef("helm.toolkit.fluxcd.io/v2", "HelmRelease", "ns", "web"),
+		K8sRef("source.toolkit.fluxcd.io/v1", "GitRepository", "ns", "flux"),
 	} {
 		if got := DependencyRefsForFetched(ref, plain); len(got) != 0 {
 			t.Errorf("%s must yield no dependency refs, got %v", ref.Label(), got)
 		}
 	}
-	if got := DependencyRefsForFetched(K8sRef("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "ns", "k"), nil); len(got) != 0 {
-		t.Errorf("a nil object must yield nothing, got %v", got)
+	for _, ref := range []engine.Ref{
+		K8sRef("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "ns", "k"),
+		K8sRef("helm.toolkit.fluxcd.io/v2", "HelmRelease", "ns", "web"),
+	} {
+		if got := DependencyRefsForFetched(ref, nil); len(got) != 0 {
+			t.Errorf("a nil object must yield nothing for %s, got %v", ref.Label(), got)
+		}
 	}
 }
 
