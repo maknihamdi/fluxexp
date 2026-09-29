@@ -96,6 +96,16 @@ dependencies nested inside it, and what it applies listed below.
   (`/?context=<ctx>&p=<type>:<ns>:<name>~…`), so any node can be reloaded,
   bookmarked and shared; browser Back/Forward walk the trail instead of leaving
   the app, and the breadcrumb gains an up-to-parent control.
+- **I10 (done)**: a status for every object. A Kustomization's inventory is full
+  of kinds nothing knew how to read — 67% of a real cluster's 255 entries showed
+  `unknown`. Health derivation now runs through `kstatus`, the library Flux uses
+  itself, with a condition-polarity layer on top so a `Bundle` with
+  `Synced=False` renders red rather than green. **Expect a visible shift**: most
+  former `unknown`s become `healthy` (a ClusterRole has nothing to report, and
+  existing is all it can do), and a new fifth status, **`pending`**, takes the
+  cases that were neither working nor broken — a controller that has not yet
+  observed the current spec, a Pod still scheduling, a running Job. On the
+  measured cluster: 642 nodes, zero `unknown`.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 

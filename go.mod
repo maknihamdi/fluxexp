@@ -6,6 +6,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
+	sigs.k8s.io/cli-utils v0.37.2
 )
 
 require (

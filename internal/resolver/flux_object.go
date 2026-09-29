@@ -44,7 +44,7 @@ func (FluxObjectResolver) Resolve(ctx context.Context, rc *ResolveContext, ref e
 		return engine.Result{}, err
 	}
 	_, kind, _, _, _ := DecodeK8sRef(ref)
-	health, detail := healthFromReady(obj)
+	health, detail := K8sHealth(obj)
 
 	return engine.Result{
 		Health: health,

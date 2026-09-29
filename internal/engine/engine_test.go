@@ -144,7 +144,7 @@ func TestTraverse_EveryNodeHasHealth(t *testing.T) {
 	resolve := graphResolver(map[string][]Ref{root.Key(): {c1}}, map[string]bool{c1.Key(): true}, calls)
 
 	got := Traverse(root, resolve)
-	valid := map[Health]bool{Healthy: true, Unhealthy: true, Unknown: true, Error: true}
+	valid := map[Health]bool{Healthy: true, Unhealthy: true, Pending: true, Unknown: true, Error: true}
 	var check func(*Node)
 	check = func(n *Node) {
 		if !valid[n.Health] {

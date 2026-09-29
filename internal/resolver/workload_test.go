@@ -10,13 +10,19 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// Every builder here sets apiVersion and kind. Health derivation dispatches on
+// them to find the workload rules, exactly as it does for an object returned by
+// the dynamic client, so a fixture without them is not a workload at all.
 func replicaObj(spec *int64, ready int64) *unstructured.Unstructured {
 	status := map[string]interface{}{"readyReplicas": ready}
 	specMap := map[string]interface{}{}
 	if spec != nil {
 		specMap["replicas"] = *spec
 	}
-	return &unstructured.Unstructured{Object: map[string]interface{}{"spec": specMap, "status": status}}
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"spec": specMap, "status": status,
+	}}
 }
 
 func i64(v int64) *int64 { return &v }
@@ -45,9 +51,32 @@ func TestReplicaHealth(t *testing.T) {
 	}
 }
 
+// A rollout that has just been declared has stale replica counts: they describe
+// the spec the controller last observed, not the one it is being asked for.
+// Reporting that as unhealthy blames a rollout for not having started.
+func TestReplicaHealth_UnobservedSpecIsPending(t *testing.T) {
+	obj := replicaObj(i64(3), 0)
+	withGenerations(obj, 4, 3)
+
+	h, d := replicaHealth(obj)
+	if h != engine.Pending {
+		t.Fatalf("got %q %q, want pending", h, d)
+	}
+	if !strings.Contains(d, "4") || !strings.Contains(d, "3") {
+		t.Fatalf("detail = %q, want both generations named", d)
+	}
+
+	// Once the controller has caught up, the counts mean what they say.
+	withGenerations(obj, 4, 4)
+	if h, d := replicaHealth(obj); h != engine.Unhealthy || d != "0/3 ready" {
+		t.Fatalf("got %q %q, want unhealthy 0/3 ready once observed", h, d)
+	}
+}
+
 func TestDaemonSetHealth(t *testing.T) {
 	ds := func(desired, ready int64) *unstructured.Unstructured {
 		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "apps/v1", "kind": "DaemonSet",
 			"status": map[string]interface{}{"desiredNumberScheduled": desired, "numberReady": ready},
 		}}
 	}
@@ -64,6 +93,7 @@ func TestDaemonSetHealth(t *testing.T) {
 
 func podObj(phase, ready string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "Pod",
 		"status": map[string]interface{}{
 			"phase":      phase,
 			"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": ready}},
@@ -80,7 +110,11 @@ func TestPodHealth(t *testing.T) {
 		{"Running", "False", engine.Unhealthy},
 		{"Succeeded", "", engine.Healthy},
 		{"Failed", "", engine.Unhealthy},
-		{"Pending", "", engine.Unknown},
+		// A pod waiting to be scheduled or pulling images is readable: it is
+		// pending. Only the Unknown phase — the node stopped reporting — is
+		// genuinely unreadable.
+		{"Pending", "", engine.Pending},
+		{"Unknown", "", engine.Unknown},
 	}
 	for _, tc := range cases {
 		if h, _ := podHealth(podObj(tc.phase, tc.ready)); h != tc.want {
@@ -92,6 +126,7 @@ func TestPodHealth(t *testing.T) {
 func TestJobHealth(t *testing.T) {
 	job := func(condType, status string) *unstructured.Unstructured {
 		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "batch/v1", "kind": "Job",
 			"status": map[string]interface{}{
 				"conditions": []interface{}{map[string]interface{}{"type": condType, "status": status}},
 			},
@@ -103,8 +138,8 @@ func TestJobHealth(t *testing.T) {
 	if h, _ := jobHealth(job("Failed", "True")); h != engine.Unhealthy {
 		t.Fatalf("failed job should be unhealthy, got %q", h)
 	}
-	if h, _ := jobHealth(job("Complete", "False")); h != engine.Unknown {
-		t.Fatalf("running job should be unknown, got %q", h)
+	if h, _ := jobHealth(job("Complete", "False")); h != engine.Pending {
+		t.Fatalf("running job should be pending, got %q", h)
 	}
 }
 
@@ -153,6 +188,7 @@ func ownerRefs(kind, ownerUID string) []interface{} {
 
 func rsObj(ns, name, uid, ownerUID string, replicas int64) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1", "kind": "ReplicaSet",
 		"metadata": map[string]interface{}{
 			"namespace": ns, "name": name, "uid": uid,
 			"ownerReferences": ownerRefs("Deployment", ownerUID),
@@ -163,6 +199,7 @@ func rsObj(ns, name, uid, ownerUID string, replicas int64) *unstructured.Unstruc
 
 func podOwned(ns, name, ownerUID string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1", "kind": "Pod",
 		"metadata": map[string]interface{}{
 			"namespace": ns, "name": name,
 			"ownerReferences": ownerRefs("ReplicaSet", ownerUID),
@@ -176,6 +213,7 @@ func podOwned(ns, name, ownerUID string) *unstructured.Unstructured {
 
 func deployObj(ns, name, uid string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1", "kind": "Deployment",
 		"metadata": map[string]interface{}{"namespace": ns, "name": name, "uid": uid},
 		"spec":     map[string]interface{}{"replicas": int64(1)},
 		"status":   map[string]interface{}{"readyReplicas": int64(1)},

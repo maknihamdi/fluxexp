@@ -57,7 +57,7 @@ func (KustomizationResolver) Resolve(ctx context.Context, rc *ResolveContext, re
 		return engine.Result{}, err
 	}
 
-	health, detail := healthFromReady(obj)
+	health, detail := K8sHealth(obj)
 
 	// Compute reconciliation freshness by comparing the applied revision to the
 	// source's fetched revision (cluster-only). A failed source fetch degrades
