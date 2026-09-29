@@ -96,7 +96,7 @@ dependencies nested inside it, and what it applies listed below.
   (`/?context=<ctx>&p=<type>:<ns>:<name>~…`), so any node can be reloaded,
   bookmarked and shared; browser Back/Forward walk the trail instead of leaving
   the app, and the breadcrumb gains an up-to-parent control.
-- **I10 (done)**: a status for every object. A Kustomization's inventory is full
+- **I9 (done)**: a status for every object. A Kustomization's inventory is full
   of kinds nothing knew how to read — 67% of a real cluster's 255 entries showed
   `unknown`. Health derivation now runs through `kstatus`, the library Flux uses
   itself, with a condition-polarity layer on top so a `Bundle` with

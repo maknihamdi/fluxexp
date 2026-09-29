@@ -216,7 +216,7 @@ This repo is developed spec-first with the OpenSpec CLI (`openspec`, v1.3.1) and
 - `openspec/changes/<name>/` — an active change (proposal, design, tasks, spec deltas);
   archived under `openspec/changes/archive/<date>-<name>/` once implemented.
 
-Work is delivered in numbered increments (I1…I6 done, see the README roadmap). A feature
+Work is delivered in numbered increments (I1…I9 done, see the README roadmap). A feature
 lands as: propose a change → implement its tasks → archive the change, which folds its spec
 deltas into `openspec/specs/`. Prefer that flow over ad-hoc edits for anything behavioral.
 
