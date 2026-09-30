@@ -20,7 +20,7 @@ from a tag is what the manifests will reference.
   binary talks to an API server and reads nothing from disk except a kubeconfig
   that will not exist in a pod, so there is nothing for a shell to be useful for.
 - On a **tag** matching `v*`, the same workflow builds the image and pushes it to
-  `quay.io/maknihamdi/fluxexp`, tagged from the semver tag (`1.2.3`, `1.2`,
+  `quay.io/hamdi_makni/fluxexp`, tagged from the semver tag (`1.2.3`, `1.2`,
   `latest`). Nothing is pushed on a branch or a pull request — an image exists
   because someone tagged a release, not because someone merged.
 - The image carries **OCI labels** (source revision, version, created) so a
@@ -63,4 +63,4 @@ Deliberately excluded from this increment:
 - Requires two repository secrets to exist before the first tag is pushed;
   without them the validation jobs still pass and only the publish job fails.
 - Consumed by the follow-up change `add-cd-manifests`, which references
-  `quay.io/maknihamdi/fluxexp` at a released tag.
+  `quay.io/hamdi_makni/fluxexp` at a released tag.

@@ -40,7 +40,7 @@ More in `docs/commands.md` (image build and its checks, CI, release).
 
 `.github/workflows/ci.yml` runs `gofmt`, `make vet`, `make test`, `make build` and an
 unpushed image build on every push and pull request; a `v*` tag additionally publishes
-`quay.io/maknihamdi/fluxexp`. Nothing is published outside a tag.
+`quay.io/hamdi_makni/fluxexp`. Nothing is published outside a tag.
 
 **The Go version is declared twice.** `go.mod` is the source — the workflow reads it
 through `setup-go`'s `go-version-file` rather than restating it — but the `Dockerfile`'s

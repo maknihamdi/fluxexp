@@ -129,7 +129,7 @@ pushed — so a broken `Dockerfile` fails a pull request rather than a release.
 
 ### Container image
 
-`quay.io/maknihamdi/fluxexp`, published **only when a `v*` tag is pushed**: an
+`quay.io/hamdi_makni/fluxexp`, published **only when a `v*` tag is pushed**: an
 image exists because someone tagged a release, so anything deployed can be
 reproduced from a tag. A tag `v1.4.2` publishes `1.4.2` and `1.4`, and moves
 `latest` only if it is the highest released version.

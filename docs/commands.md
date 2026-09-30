@@ -51,10 +51,10 @@ Reading a published image back, to tie a running container to a commit:
 
 ```bash
 # The OCI labels: .source, .revision, .version, .created.
-docker buildx imagetools inspect quay.io/maknihamdi/fluxexp:0.1.0 --raw
+docker buildx imagetools inspect quay.io/hamdi_makni/fluxexp:0.1.0 --raw
 
 # Which tags exist.
-skopeo list-tags docker://quay.io/maknihamdi/fluxexp
+skopeo list-tags docker://quay.io/hamdi_makni/fluxexp
 ```
 
 ## CI

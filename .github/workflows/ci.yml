@@ -82,7 +82,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: quay.io/maknihamdi/fluxexp
+          images: quay.io/hamdi_makni/fluxexp
           # Off, so the action's own rule cannot add `latest` behind the decision
           # made in the step above.
           flavor: latest=false

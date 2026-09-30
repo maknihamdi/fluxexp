@@ -92,7 +92,7 @@ back to the commit it was built from.
 
 ### Requirement: An image is published for a released tag only
 
-The pipeline SHALL publish a container image to `quay.io/maknihamdi/fluxexp`
+The pipeline SHALL publish a container image to `quay.io/hamdi_makni/fluxexp`
 when, and only when, a tag matching `v*` is pushed. Publication MUST be
 conditional on the validation checks having passed for that same ref.
 
@@ -109,7 +109,7 @@ since it writes only to the registry.
 #### Scenario: A version tag publishes an image
 
 - **WHEN** the tag `v1.4.2` is pushed
-- **THEN** the image is pushed to `quay.io/maknihamdi/fluxexp` tagged `1.4.2`, `1.4` and `latest`
+- **THEN** the image is pushed to `quay.io/hamdi_makni/fluxexp` tagged `1.4.2`, `1.4` and `latest`
 
 #### Scenario: Validation gates publication
 

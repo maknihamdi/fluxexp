@@ -23,7 +23,7 @@ Constraints that shape everything below:
 **Goals:**
 
 - Every push and pull request proves the code formats, vets, tests and builds.
-- Every `v*` tag produces one immutable image at `quay.io/maknihamdi/fluxexp`,
+- Every `v*` tag produces one immutable image at `quay.io/hamdi_makni/fluxexp`,
   traceable back to its commit.
 - One workflow file, one Dockerfile, no Go code touched.
 
@@ -143,7 +143,7 @@ the validate job does not build the image. Mitigated below.
 ### Credentials
 
 `QUAY_USERNAME` / `QUAY_TOKEN` repository secrets, a Quay robot account with
-write on `maknihamdi/fluxexp` only. `permissions: contents: read` at the workflow
+write on `hamdi_makni/fluxexp` only. `permissions: contents: read` at the workflow
 level — nothing here writes to the repository, and the default token grant is
 wider than that.
 
