@@ -48,10 +48,10 @@
 
 ## 7. Release and verify
 
-- [ ] 7.1 Tag **`v0.2.0`**, not `v0.1.0` — `v0.1.0` already has a published image, so re-tagging it would leave the image and the release describing different commits
-- [ ] 7.2 Confirm the job order on the run: `validate` → `publish` and `build-binaries` → `release`
+- [x] 7.1 Tag **`v0.2.0`**, not `v0.1.0` — `v0.1.0` already has a published image, so re-tagging it would leave the image and the release describing different commits
+- [x] 7.2 Confirm the job order on the run: `validate` → `publish` and `build-binaries` → `release`
 - [ ] 7.3 Confirm the release carries five archives and `SHA256SUMS` (`gh release view v0.2.0 --json assets`)
 - [ ] 7.4 Download the `linux/amd64` archive and `SHA256SUMS`, verify with the targeted form (`grep <archive> SHA256SUMS | sha256sum -c -` — a plain `-c SHA256SUMS` fails on the four archives not downloaded), extract it, and confirm the binary reports `0.2.0` and the archive contains `LICENSE`
-- [ ] 7.5 Confirm `docker run --rm quay.io/hamdi_makni/fluxexp:0.2.0 --version` reports `0.2.0`, agreeing with `org.opencontainers.image.version`
-- [ ] 7.6 Confirm `org.opencontainers.image.licenses` is now `MIT` — it was empty on `v0.1.0` because there was no `LICENSE`
+- [x] 7.5 Confirm `docker run --rm quay.io/hamdi_makni/fluxexp:0.2.0 --version` reports `0.2.0`, agreeing with `org.opencontainers.image.version`
+- [x] 7.6 Confirm `org.opencontainers.image.licenses` is now `MIT` — it was empty on `v0.1.0` because there was no `LICENSE`
 - [ ] 7.7 Confirm both README badges render and point at the right places

@@ -203,6 +203,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          # Named, not swept: `build-push-action` uploads a `.dockerbuild` build
+          # record of its own, so "every artifact in this run" is not this job's
+          # five archives — and downloading those records fails outright.
+          pattern: fluxexp_*
           merge-multiple: true
 
       # One file for the whole release: `sha256sum -c` consumes a list, and five

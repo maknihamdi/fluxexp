@@ -71,6 +71,15 @@ One job creating the release also means the checksum file covers **all** archive
 Computed per matrix job it would be five one-line files, which is not what
 `sha256sum -c` expects.
 
+The collecting job must **name what it collects**. Measured on the `v0.2.0` run:
+the workflow produced seven artifacts, not five — `docker/build-push-action`
+uploads a `.dockerbuild` build record of its own, once from `validate` and once
+from `publish`. Downloading every artifact in the run therefore tried to fetch
+those records and failed outright (`Artifact download failed after 5 retries`),
+taking the whole release with it. A name pattern restricted to the archives fixes
+it, and is the right shape regardless: what this job releases must not depend on
+what other jobs happen to upload.
+
 `build-binaries` needs `needs: validate` as well: the same rule as the image —
 nothing is released from a commit whose tests have not passed.
 
