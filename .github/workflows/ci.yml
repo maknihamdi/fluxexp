@@ -104,8 +104,116 @@ jobs:
         with:
           context: .
           push: true
+          # So the binary's --version agrees with the image's version label.
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
-          # OCI labels: source, revision, version, created. They are what lets a
-          # running pod be traced back to a commit, since the binary has no
-          # --version flag.
+          # OCI labels: source, revision, version, created. `--version` names the
+          # release; only the labels name the commit it was built from.
           labels: ${{ steps.meta.outputs.labels }}
+
+  build-binaries:
+    needs: validate
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # No permissions block: a build needs nothing beyond the read-only default.
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Every target is a plain cross-compile on this one runner: the binary is
+      # static and the frontend is embedded, so no target needs a native runner
+      # or a C toolchain.
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          binary=fluxexp
+          # An `&&` here would exit the step for every non-Windows target, since
+          # a false test makes the whole compound command fail under `bash -e`.
+          if [ "$GOOS" = windows ]; then
+            binary=fluxexp.exe
+          fi
+          go build -ldflags "-X main.version=${version}" -o "$binary" ./cmd/fluxexp
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          echo "BINARY=${binary}" >> "$GITHUB_ENV"
+
+      # Only the native target can be executed here. It catches a broken ldflags
+      # path, which is the failure that is not platform-specific — the other four
+      # archives are published without ever being run.
+      - name: Smoke-test the native build
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          got=$(./fluxexp --version)
+          echo "$got"
+          case "$got" in
+            *"$VERSION"*) ;;
+            *) echo "expected version $VERSION in: $got"; exit 1 ;;
+          esac
+
+      - name: Archive
+        run: |
+          name="fluxexp_${VERSION}_${GOOS}_${GOARCH}"
+          # LICENSE travels inside the archive: a downloaded file carries no link
+          # back to the repository.
+          if [ "$GOOS" = windows ]; then
+            zip -q "${name}.zip" "$BINARY" LICENSE
+            echo "ARCHIVE=${name}.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "${name}.tar.gz" "$BINARY" LICENSE
+            echo "ARCHIVE=${name}.tar.gz" >> "$GITHUB_ENV"
+          fi
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+          retention-days: 1
+
+  release:
+    needs: build-binaries
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # The only job that writes to the repository. The workflow default stays
+    # read-only, so the jobs holding registry credentials and the job able to
+    # write here are disjoint sets.
+    permissions:
+      contents: write
+    steps:
+      # One job creates the release, after all five builds. Publishing from
+      # inside the matrix would have five jobs racing to create the same release,
+      # and one missing two of its five assets looks complete.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One file for the whole release: `sha256sum -c` consumes a list, and five
+      # one-line files would leave the reader comparing them by hand.
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum fluxexp_* > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

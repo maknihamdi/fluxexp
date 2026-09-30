@@ -1,5 +1,8 @@
 # fluxexp
 
+[![ci](https://github.com/maknihamdi/fluxexp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/maknihamdi/fluxexp/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/maknihamdi/fluxexp)](https://github.com/maknihamdi/fluxexp/releases/latest)
+
 Traverse the full dependency graph of resources reconciled by **FluxCD** — from
 a starting Flux object all the way down to the concrete resource it ultimately
 produces — and report health along the way.
@@ -19,6 +22,51 @@ may live in a **different domain**. The engine only walks the graph (BFS),
 dedupes by a stable key (cycle-safe), and tolerates partial failure. Adding a new
 hop — even in a new backend — means registering a new resolver; the engine never
 changes.
+
+## Install
+
+Download the archive for your platform from the
+[latest release](https://github.com/maknihamdi/fluxexp/releases/latest) —
+`linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` and `windows/amd64`
+are published for every version.
+
+```bash
+VERSION=0.2.0
+OS=linux        # or darwin
+ARCH=amd64      # or arm64
+
+curl -sSLO "https://github.com/maknihamdi/fluxexp/releases/download/v${VERSION}/fluxexp_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -sSLO "https://github.com/maknihamdi/fluxexp/releases/download/v${VERSION}/SHA256SUMS"
+
+# Verify before running it: fluxexp reads your kubeconfig and talks to your
+# clusters with your credentials. SHA256SUMS covers all five archives, so check
+# the line for the one you downloaded rather than the whole file.
+grep "fluxexp_${VERSION}_${OS}_${ARCH}" SHA256SUMS | sha256sum -c -
+
+tar xzf "fluxexp_${VERSION}_${OS}_${ARCH}.tar.gz"
+sudo install -m 0755 fluxexp /usr/local/bin/fluxexp
+fluxexp --version
+```
+
+On macOS, `shasum -a 256 -c -` replaces `sha256sum -c -`; the rest is identical.
+On Windows, download the `.zip`, which contains `fluxexp.exe`.
+
+With the Go toolchain instead (reports its own version, no download to verify):
+
+```bash
+go install github.com/maknihamdi/fluxexp/cmd/fluxexp@latest
+```
+
+Or run the container image — see [Container image](#container-image). It is the
+right choice for running the portal *in* a cluster, and the wrong one for a CLI
+whose job is to read your local kubeconfig.
+
+> The `ci` badge above reports the latest run on `main`, not the build of the
+> released tag. GitHub's badge accepts a branch or an event, and has no parameter
+> for a tag, so a green badge means `main` is healthy — read the `release` badge
+> for which version is out.
+
+`fluxexp` is MIT licensed; the licence travels inside every release archive.
 
 ## Usage
 
@@ -112,6 +160,17 @@ dependencies nested inside it, and what it applies listed below.
   cases that were neither working nor broken — a controller that has not yet
   observed the current spec, a Pod still scheduling, a running Job. On the
   measured cluster: 642 nodes, zero `unknown`.
+- **I11 (done)**: CI, and an image. GitHub Actions validates every push and pull
+  request (`gofmt`, `vet`, tests, build, plus an *unpushed* image build so a
+  broken `Dockerfile` fails a pull request rather than a release), and a `v*` tag
+  publishes `quay.io/hamdi_makni/fluxexp` — a static binary on a distroless base,
+  no shell, uid 65532. Nothing is published outside a tag.
+- **I12 (done)**: releases for humans. The same tag now also builds `fluxexp` for
+  five targets (`linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`,
+  `windows/amd64`) and attaches the archives, with one `SHA256SUMS` covering them
+  all, to a GitHub Release. The binary gained `--version`, which reports the
+  released version, or the version the Go toolchain recorded for anything built
+  otherwise. MIT licensed.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 

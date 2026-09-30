@@ -32,10 +32,10 @@
 
 ## 5. First release
 
-- [ ] 5.1 Tag `v0.1.0` on `main` and push it
-- [ ] 5.2 Confirm `validate` runs and `publish` waits for it, then confirm the image appears at `quay.io/hamdi_makni/fluxexp` with tags `0.1.0`, `0.1`, `latest`
-- [ ] 5.3 Read the labels back (`docker buildx imagetools inspect quay.io/hamdi_makni/fluxexp:0.1.0`) and confirm `org.opencontainers.image.revision` matches the tagged commit
-- [ ] 5.4 Confirm no image was pushed by the earlier branch and pull-request runs
+- [x] 5.1 Tag `v0.1.0` on `main` and push it
+- [x] 5.2 Confirm `validate` runs and `publish` waits for it, then confirm the image appears at `quay.io/hamdi_makni/fluxexp` with tags `0.1.0`, `0.1`, `latest`
+- [x] 5.3 Read the labels back (`docker buildx imagetools inspect quay.io/hamdi_makni/fluxexp:0.1.0`) and confirm `org.opencontainers.image.revision` matches the tagged commit
+- [x] 5.4 Confirm no image was pushed by the earlier branch and pull-request runs
 
 ## 6. Documentation
 

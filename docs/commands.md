@@ -78,6 +78,33 @@ gh secret set QUAY_TOKEN
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+## Binaries
+
+```bash
+# What the release matrix does, for one target. Useful for reproducing a build
+# locally or checking a target still compiles before tagging.
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+  go build -ldflags "-X main.version=0.2.0" -o /tmp/fluxexp ./cmd/fluxexp
+
+# What version a binary claims. Injected value, else the version the toolchain
+# recorded (a dirty tree is marked), else `dev`.
+fluxexp --version
+```
+
+```bash
+# The release's assets, without opening a browser.
+gh release view v0.2.0 --json assets --jq '.assets[].name'
+
+# Download them all, or one.
+gh release download v0.2.0
+gh release download v0.2.0 --pattern 'fluxexp_*_linux_amd64.tar.gz'
+
+# Verify. SHA256SUMS covers every archive, so check the line for the one you
+# have rather than the whole file, which would fail on the four you did not
+# download. macOS: shasum -a 256 -c -
+grep 'fluxexp_0.2.0_linux_amd64' SHA256SUMS | sha256sum -c -
+```
+
 ```bash
 # Which tag `latest` would follow — the same computation the publish job makes.
 git tag -l 'v*' --sort=-v:refname | sed '/-/d' | head -n1

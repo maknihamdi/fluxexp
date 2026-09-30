@@ -15,10 +15,16 @@ RUN go mod download
 
 COPY . .
 
+# The version the binary reports through --version. Defaulted so a plain
+# `docker build .` still works; the pipeline passes the released version, because
+# a --version answering `dev` while the image labels announce 0.1.0 would make
+# the flag a liar.
+ARG VERSION=dev
+
 # CGO off is required, not incidental: the final base is statically linked and
 # carries no libc for cgo's resolver to call. It also gives the pure-Go resolver,
 # which reads /etc/resolv.conf the way a cluster expects.
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/fluxexp ./cmd/fluxexp
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION}" -o /out/fluxexp ./cmd/fluxexp
 
 # distroless static carries exactly what this binary needs: CA certificates (its
 # only outbound traffic is HTTPS to an API server), /etc/passwd with the nonroot
