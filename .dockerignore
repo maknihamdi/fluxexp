@@ -1,0 +1,14 @@
+# The build context is a Go module and nothing else. Everything here either
+# cannot affect the build or would invalidate its cache for no reason.
+.git/
+.github/
+.idea/
+.claude/
+.DS_Store
+bin/
+openspec/
+CLAUDE.md
+README.md
+Makefile
+Dockerfile
+.dockerignore

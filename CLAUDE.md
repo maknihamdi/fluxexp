@@ -34,6 +34,26 @@ fluxexp traverse --api-version helm.toolkit.fluxcd.io/v2 --kind HelmRelease -n t
 fluxexp ui [--address 127.0.0.1:8765]                    # local no-auth portal
 ```
 
+More in `docs/commands.md` (image build and its checks, CI, release).
+
+## CI and the image
+
+`.github/workflows/ci.yml` runs `gofmt`, `make vet`, `make test`, `make build` and an
+unpushed image build on every push and pull request; a `v*` tag additionally publishes
+`quay.io/maknihamdi/fluxexp`. Nothing is published outside a tag.
+
+**The Go version is declared twice.** `go.mod` is the source — the workflow reads it
+through `setup-go`'s `go-version-file` rather than restating it — but the `Dockerfile`'s
+builder tag (`FROM golang:1.26`) cannot read `go.mod`, so it is pinned there. A toolchain
+bump touches both. A drift where the image is older fails loudly (Go refuses a `go.mod`
+requiring a newer toolchain); the other direction is harmless.
+
+`latest` is decided by a shell step in the publish job, not by `metadata-action`: the
+action sees only the ref that triggered the run and queries neither the repository's other
+tags nor the registry, so it cannot know a tag is a patch on an older line. The action's
+own rule is turned off (`flavor: latest=false`) so it cannot add the tag behind that
+decision.
+
 ## Architecture
 
 The design rule the whole codebase serves: **adding a new hop — even into a new backend —

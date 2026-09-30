@@ -123,5 +123,30 @@ make test    # go test ./...
 make run ARGS="traverse -n flux-system --name apps"
 ```
 
+Every push and pull request runs the same checks in CI (`.github/workflows/ci.yml`):
+`gofmt`, `make vet`, `make test`, `make build`, plus an image build that is not
+pushed — so a broken `Dockerfile` fails a pull request rather than a release.
+
+### Container image
+
+`quay.io/maknihamdi/fluxexp`, published **only when a `v*` tag is pushed**: an
+image exists because someone tagged a release, so anything deployed can be
+reproduced from a tag. A tag `v1.4.2` publishes `1.4.2` and `1.4`, and moves
+`latest` only if it is the highest released version.
+
+The image is a static binary on a distroless base — no shell, no package manager,
+non-root by default. The frontend is compiled in, so there is no asset step.
+
+```bash
+docker build -t fluxexp:dev .
+docker run --rm -p 8765:8765 fluxexp:dev ui --address 0.0.0.0:8765
+```
+
+The `--address` is required to reach it from outside the container: the binary
+binds loopback by default and that default does not change.
+
+More commands — the image checks, reading an image's labels back, watching a run
+— are in [`docs/commands.md`](docs/commands.md).
+
 Spec-driven via [OpenSpec](https://github.com/Fission-AI/OpenSpec); see
 `openspec/`.

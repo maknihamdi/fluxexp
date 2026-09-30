@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+# Nothing here writes to the repository: the only artifact leaves for an external
+# registry. The default token grant is wider than that.
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # go.mod is the single declaration of the toolchain version. Pinning it
+          # here too would be a second place to bump, and the two would drift.
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # The Makefile already defines what these mean. Restating `go test ./...`
+      # here would create a second definition that can disagree with the one a
+      # developer runs locally.
+      - run: make vet
+      - run: make test
+      - run: make build
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build the image without pushing it, so a broken Dockerfile is caught on a
+      # pull request instead of at tag time, when it would fail a release.
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+
+  publish:
+    needs: validate
+    # On the ref, not on the event name: a tag push is a `push` event too, so
+    # gating on the event would publish for every merge to main.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The `latest` decision below compares this tag against the others, so
+          # the tags have to be here. It is the only reason for a full clone.
+          fetch-depth: 0
+
+      # metadata-action sees only the ref that triggered the run: it queries
+      # neither the repository's other tags nor the registry, so it cannot know
+      # that v1.3.5 is a patch on an older line than an already-released v1.4.2.
+      # That comparison is made here and nowhere else.
+      - name: Decide whether this tag is the highest released version
+        id: latest
+        run: |
+          # sed drops prereleases; `grep -v -- -` would pass a lone dash as the
+          # pattern, which not every grep accepts.
+          highest=$(git tag -l 'v*' --sort=-v:refname | sed '/-/d' | head -n1)
+          if [ "$highest" = "$GITHUB_REF_NAME" ]; then
+            echo "latest=true"
+          else
+            echo "latest=false"
+          fi >> "$GITHUB_OUTPUT"
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: quay.io/maknihamdi/fluxexp
+          # Off, so the action's own rule cannot add `latest` behind the decision
+          # made in the step above.
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ steps.latest.outputs.latest }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # OCI labels: source, revision, version, created. They are what lets a
+          # running pod be traced back to a commit, since the binary has no
+          # --version flag.
+          labels: ${{ steps.meta.outputs.labels }}
