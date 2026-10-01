@@ -50,8 +50,23 @@
 
 - [x] 7.1 Tag **`v0.2.0`**, not `v0.1.0` — `v0.1.0` already has a published image, so re-tagging it would leave the image and the release describing different commits
 - [x] 7.2 Confirm the job order on the run: `validate` → `publish` and `build-binaries` → `release`
-- [ ] 7.3 Confirm the release carries five archives and `SHA256SUMS` (`gh release view v0.2.0 --json assets`)
-- [ ] 7.4 Download the `linux/amd64` archive and `SHA256SUMS`, verify with the targeted form (`grep <archive> SHA256SUMS | sha256sum -c -` — a plain `-c SHA256SUMS` fails on the four archives not downloaded), extract it, and confirm the binary reports `0.2.0` and the archive contains `LICENSE`
+- [x] 7.3 Confirm the release carries five archives and `SHA256SUMS` (`gh release view <tag> --json assets`)
+- [x] 7.4 Download the `linux/amd64` archive and `SHA256SUMS`, verify with the targeted form (`grep <archive> SHA256SUMS | sha256sum -c -` — a plain `-c SHA256SUMS` fails on the four archives not downloaded), extract it, and confirm the binary reports the release version and the archive contains `LICENSE`
 - [x] 7.5 Confirm `docker run --rm quay.io/hamdi_makni/fluxexp:0.2.0 --version` reports `0.2.0`, agreeing with `org.opencontainers.image.version`
 - [x] 7.6 Confirm `org.opencontainers.image.licenses` is now `MIT` — it was empty on `v0.1.0` because there was no `LICENSE`
-- [ ] 7.7 Confirm both README badges render and point at the right places
+- [x] 7.7 Confirm both README badges render and point at the right places
+
+**Where this was verified.** Group 7 ran across three tags and two repositories,
+because the release job failed on its first attempt and the repository was
+republished mid-increment:
+
+- `v0.2.0` — image published; the `release` job failed (`download-artifact`
+  swept `build-push-action`'s `.dockerbuild` records). 7.1, 7.2, 7.5, 7.6 were
+  verified here: `licenses` went from empty to `MIT`.
+- `v0.2.1` — the fix; first complete release. 7.3 and 7.4 verified here: five
+  archives, checksums, `LICENSE` in the archive, the `darwin/arm64` binary run
+  natively and the `linux/amd64` one under emulation.
+- `v0.3.0` — the first release of the scrubbed, public repository. 7.3 re-verified,
+  and 7.7 closed: the release badge went from `no releases or repo not found` to
+  `release: v0.3.0`, which it could never have shown while the repository was
+  private.

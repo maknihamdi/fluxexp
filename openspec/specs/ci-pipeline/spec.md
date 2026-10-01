@@ -106,8 +106,14 @@ tag.
 The published tags MUST be derived from the semantic version of the git tag — the
 full version, its major.minor prefix, and a `latest` pointer moved only when the
 tag is the highest version released. Registry credentials MUST come from
-repository secrets, and the pipeline MUST request no repository write permission,
-since it writes only to the registry.
+repository secrets.
+
+The pipeline's **default permission MUST remain read-only**. Publishing the image
+requires no repository write access, since it writes only to the registry, and the
+image jobs MUST NOT request any. Where a write permission is genuinely required —
+creating a release — it MUST be granted at the level of the single job that needs
+it and never at the workflow level, so that the jobs handling registry
+credentials and the jobs able to write to the repository remain disjoint sets.
 
 #### Scenario: A version tag publishes an image
 
@@ -133,3 +139,13 @@ since it writes only to the registry.
 
 - **WHEN** the registry secrets are absent and a tag is pushed
 - **THEN** the validation checks still pass and the publication step fails with a login error
+
+#### Scenario: The workflow default stays read-only
+
+- **WHEN** the pipeline definition is inspected
+- **THEN** its workflow-level permission is read-only, and the image jobs request no write access
+
+#### Scenario: Write access is scoped to the job that needs it
+
+- **WHEN** a job must write to the repository to create a release
+- **THEN** that permission is declared on that job alone, and every other job keeps the read-only default
