@@ -31,7 +31,7 @@ Download the archive for your platform from the
 are published for every version.
 
 ```bash
-VERSION=0.2.0
+VERSION=0.3.0
 OS=linux        # or darwin
 ARCH=amd64      # or arm64
 
