@@ -7,9 +7,15 @@ cluster it inspects, applicable with a single `kubectl apply -k` and requiring n
 patch, no overlay and no external chart.
 
 The base MUST be self-contained: it declares its own namespace, and every
-selector — Deployment, Service, PodDisruptionBudget — MUST be generated from one
-label definition rather than written three times, so a selector cannot silently
-match nothing.
+selector — Deployment, Service, PodDisruptionBudget, and any pod-spreading
+constraint — MUST resolve to the same label set, so that no selector can silently
+match the wrong pods.
+
+Where the build tool generates a selector it MUST NOT be restated; where the tool
+does not reach, the selector MUST be written explicitly rather than left empty. An
+empty selector is not a neutral default: on a PodDisruptionBudget or a spread
+constraint it matches **every** pod in the namespace, which only resembles correct
+behaviour while the namespace happens to hold nothing else.
 
 The deployed container MUST run the portal bound to all interfaces, passed as an
 explicit argument. The default bind address MUST remain loopback, so reachability
@@ -23,10 +29,15 @@ The image reference MUST name a published version, never a moving tag.
 - **WHEN** the base is applied to a cluster with `kubectl apply -k`
 - **THEN** every object is accepted and the portal becomes reachable on its Service
 
-#### Scenario: Selectors are consistent by construction
+#### Scenario: Selectors are consistent
 
 - **WHEN** the rendered manifests are inspected
-- **THEN** the Deployment's pod labels, the Service's selector and the PodDisruptionBudget's selector all match, having been generated from one definition
+- **THEN** the Deployment's pod labels and selector, the Service's selector, the PodDisruptionBudget's selector and the spread constraint's selector all carry the same labels
+
+#### Scenario: No selector is left empty
+
+- **WHEN** the rendered PodDisruptionBudget and spread constraint are inspected
+- **THEN** each names the labels it selects, rather than relying on an empty selector that would match every pod in the namespace
 
 #### Scenario: The portal binds beyond loopback only because the manifest says so
 
@@ -56,11 +67,18 @@ The consequence MUST be stated where the permission is granted: the pod can read
 every Secret in the cluster, and the portal is unauthenticated, so anyone who
 reaches it reads through that permission.
 
-The Secret grant MUST be expressed as a rule separate from the rest, so that an
-operator who refuses it can remove it in place, accepting that HelmRelease
-expansion stops working. Narrowing it further is not possible: authorization
-cannot restrict reads to Secrets matching a name pattern while still permitting
-`list`.
+The Secret grant is **inseparable** from the rest and MUST be documented as such
+where it is granted. Authorization here is allow-only with no exclusion syntax: a
+wildcard over resources includes Secrets, a second rule naming Secrets would be
+redundant rather than removable, and "every group except the core one" cannot be
+expressed because the wildcard spans the core group too.
+
+An operator who refuses cluster-wide Secret access MUST therefore be told what
+the alternative costs rather than offered a rule to delete: the resources have to
+be enumerated explicitly, which trades away the ability to follow a kind nobody
+listed in advance — the premise of the traversal. Narrowing to Secrets matching a
+name pattern is not available either, since name-based restriction does not apply
+to listing.
 
 The absence of write verbs MUST make the read-only invariant enforceable by the
 API server, not only by the code.
@@ -80,10 +98,10 @@ API server, not only by the code.
 - **WHEN** the granted permissions are inspected
 - **THEN** they contain no create, update, patch, delete or watch verb for any resource
 
-#### Scenario: The Secret grant is removable
+#### Scenario: The breadth is stated where it is granted
 
-- **WHEN** an operator deletes the rule granting Secret access
-- **THEN** every other kind still resolves and only HelmRelease expansion stops working
+- **WHEN** the permission definition is read
+- **THEN** it states that the pod can read every Secret in the cluster, that the portal is unauthenticated, and why the grant cannot be narrowed without losing arbitrary-kind traversal
 
 ### Requirement: Availability and scaling are declared coherently
 

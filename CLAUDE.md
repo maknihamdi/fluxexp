@@ -146,6 +146,23 @@ Kubernetes-specific reference encoding lives here, not in `internal/k8s`: `K8sRe
 resolve without generated types. Exposes `Get` / `List` / `Namespaced` (the `K8sGetter`
 interface resolvers depend on) and `ListContexts` for the UI. It knows nothing about the engine.
 
+`ListContexts` has a second branch: with no kubeconfig contexts and in-cluster credentials
+available it reports a single context named `k8s.InClusterContext` (`"in-cluster"`). A missing
+kubeconfig is not an error to `clientcmd`, so without it a pod got an empty selector and no
+explanation. **The sentinel is mapped back to the empty context in `ui.Service.clientFor`, and
+nowhere else** — it cannot be passed through to `LoadClient`, because a context name absent from
+the kubeconfig fails validation with "context was not found", which is not an empty-config error
+and so never reaches the in-cluster fallback. `inClusterConfig` is an overridable var, like
+`freshness.go`'s `now`, so both branches are testable without a cluster.
+
+**`deploy/`** — a kustomize base running the portal in-cluster. Two things in it are not
+obvious: the Deployment declares **no `replicas`** (the HPA owns the count, and a manifest that
+also declares it flaps on every apply), and the PodDisruptionBudget's selector plus the
+topology-spread `labelSelector` are **written by hand** — kustomize's label transformer fills
+the Deployment's and the Service's but not those, and an empty selector there matches every pod
+in the namespace rather than none. The ClusterRole's wildcard read cannot be narrowed by
+splitting out Secrets: authorization is allow-only, so the wildcard already covers them.
+
 **`internal/render`** — pure functions from `*engine.Node` / rows to text (tree, list). No I/O.
 
 **`internal/ui`** — `Service` + `Handler` serving `/api/contexts`, `/api/roots`, `/api/expand`

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/maknihamdi/fluxexp/internal/engine"
+	"github.com/maknihamdi/fluxexp/internal/k8s"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -112,6 +113,48 @@ func newFakeService() (*Service, *fakeCluster) {
 	}
 	s := newService(func(string) (cluster, error) { return fc, nil })
 	return s, fc
+}
+
+// The in-cluster sentinel names a mode, not a kubeconfig context. It has to
+// reach the client factory as the empty context — that is what clientcmd
+// resolves in-cluster — because the sentinel itself would fail context
+// validation and never reach the fallback.
+func TestClientFor_InClusterSentinelBecomesEmptyContext(t *testing.T) {
+	var asked []string
+	s := newService(func(name string) (cluster, error) {
+		asked = append(asked, name)
+		return &fakeCluster{}, nil
+	})
+
+	if _, err := s.clientFor(k8s.InClusterContext); err != nil {
+		t.Fatalf("clientFor: %v", err)
+	}
+	if len(asked) != 1 || asked[0] != "" {
+		t.Fatalf("factory called with %q, want the empty context", asked)
+	}
+
+	// Cached under the name the caller used, so a second call does not rebuild.
+	if _, err := s.clientFor(k8s.InClusterContext); err != nil {
+		t.Fatalf("clientFor (cached): %v", err)
+	}
+	if len(asked) != 1 {
+		t.Fatalf("factory called %d times, want 1", len(asked))
+	}
+}
+
+func TestClientFor_NamedContextIsPassedThrough(t *testing.T) {
+	var asked []string
+	s := newService(func(name string) (cluster, error) {
+		asked = append(asked, name)
+		return &fakeCluster{}, nil
+	})
+
+	if _, err := s.clientFor("prod"); err != nil {
+		t.Fatalf("clientFor: %v", err)
+	}
+	if len(asked) != 1 || asked[0] != "prod" {
+		t.Fatalf("factory called with %q, want \"prod\"", asked)
+	}
 }
 
 func TestRoots_ExtractsSummary(t *testing.T) {

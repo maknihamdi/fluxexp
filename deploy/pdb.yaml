@@ -1,0 +1,22 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fluxexp
+spec:
+  # Paired with the HPA's minReplicas: 2 — the two numbers are one decision. At a
+  # single replica, requiring one available pod makes a voluntary eviction
+  # impossible forever: the only pod can never be drained. At two it means "drain
+  # one at a time", which is what a budget is for.
+  #
+  # maxUnavailable: 1 would be deadlock-free at any count, but it also permits
+  # evicting the last pod when there is only one, so it protects nothing in the
+  # case that matters.
+  minAvailable: 1
+  # Written explicitly, not generated: kustomize's label transformer fills the
+  # Deployment's and the Service's selectors but not a PodDisruptionBudget's, and
+  # a PDB with an empty selector matches EVERY pod in the namespace. That would
+  # work here only because the namespace is dedicated — too load-bearing to leave
+  # to an accident.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fluxexp

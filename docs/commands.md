@@ -117,3 +117,52 @@ fluxexp list --kind Kustomization --unhealthy    # discover broken starting poin
 fluxexp traverse -n flux-system --name apps      # the whole tree from one root
 fluxexp ui                                       # portal on 127.0.0.1:8765
 ```
+
+## Deploying the portal
+
+Always pass `--context` explicitly. The current context is whatever it last was,
+and this applies a ClusterRole granting cluster-wide read.
+
+```bash
+# Render and read before applying anything.
+kubectl kustomize deploy/
+
+# Check the selectors agree — the Deployment's and the Service's are generated,
+# the PDB's and the spread constraint's are written by hand because kustomize's
+# label transformer does not reach them.
+kubectl kustomize deploy/ | grep -A2 -E "^  selector:|labelSelector:"
+```
+
+```bash
+# Validate against a real API server. The cluster-scoped objects only: a server
+# dry-run does not create the Namespace, so the namespaced ones fail with
+# `namespaces "fluxexp" not found`. That is the dry-run's limitation, not a
+# manifest defect.
+kubectl --context <ctx> apply -k deploy/ --dry-run=server
+```
+
+```bash
+# Apply. WRITES: a Namespace, a ServiceAccount, a ClusterRole with cluster-wide
+# read (Secrets included) and a ClusterRoleBinding, plus the workload.
+kubectl --context <ctx> apply -k deploy/
+
+kubectl --context <ctx> -n fluxexp port-forward svc/fluxexp 8765:8765
+```
+
+```bash
+# The HPA owns the replica count; the Deployment declares none. Re-applying must
+# not reset it.
+kubectl --context <ctx> -n fluxexp get hpa,deploy
+
+# How many evictions the budget allows right now. With minAvailable 1 and two
+# replicas this reads 1; at one replica it reads 0 and a drain would hang.
+kubectl --context <ctx> -n fluxexp get pdb
+
+# Where to revise the resource requests from.
+kubectl --context <ctx> -n fluxexp top pod
+```
+
+```bash
+# Remove everything this base created.
+kubectl --context <ctx> delete -k deploy/
+```

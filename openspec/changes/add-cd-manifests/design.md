@@ -63,10 +63,16 @@ to express a difference, and there is one environment. Creating the directory pa
 now means writing a patch that patches nothing, and the day a second environment
 appears the base moves in one `git mv`.
 
-Common labels via `labels:` with `includeSelectors: true` so the Deployment
-selector, the Service selector and the PDB selector are all generated from one
-place. Hand-writing three matching selectors is how a PDB ends up silently
-selecting nothing.
+Common labels via `labels:` with `includeSelectors: true`, which generates the
+Deployment's selector and pod labels and the Service's selector from one place.
+
+**It does not reach the PodDisruptionBudget's selector, nor a spread
+constraint's** — measured on kustomize v5.0.4, where both came out empty. That is
+worse than it looks: an empty selector on either of those matches *every* pod in
+the namespace, so the manifests would have behaved correctly only because the
+namespace is dedicated to this one workload. Both are therefore written
+explicitly, with a comment saying why, and the rendered output is checked for all
+five selectors agreeing rather than assumed from the transformer's reputation.
 
 ### The Deployment declares no `replicas`
 
@@ -105,12 +111,23 @@ Two properties of the tool force this:
 
 So the honest statement is: **this pod can read every Secret in the cluster**, and
 anyone who reaches the portal reads through it, unauthenticated. That is stated in
-the spec as a property of the deployment, not buried. The narrowing that exists
-if that is unacceptable: split the rule in two — everything except Secrets, plus
-Secrets — and delete the second. RBAC cannot express "only Secrets named
-`sh.helm.release.v1.*`" (`resourceNames` requires exact names and does not apply
-to `list`), so the choice is all Secrets or no HelmRelease expansion. The
-manifests keep the two rules separate so that deletion is a three-line edit.
+the spec as a property of the deployment, not buried.
+
+This design first claimed the Secret grant could be split into a second, deletable
+rule. **It cannot**, and writing the manifests is what exposed it. RBAC is
+allow-only with no exclusion syntax: the wildcard already includes Secrets, so a
+second rule naming them is redundant and deleting it revokes nothing; and "every
+group except the core one" is inexpressible, because `apiGroups: ["*"]` spans the
+core group where Secrets live. Nor can it be narrowed by name —
+`resourceNames` takes exact names and does not apply to `list`, so
+`sh.helm.release.v1.*` is not a thing RBAC can say.
+
+The grant is therefore **one rule, all-or-nothing**, carrying the comment that
+says so. An operator who refuses it has one real alternative: enumerate the
+resources explicitly, and accept that a kind nobody listed in advance becomes a
+permission error instead of a node — which is trading away the premise. That
+trade is documented beside the rule rather than pretended away by a rule that
+looks optional.
 
 `watch` is deliberately absent — nothing in the code opens a watch — and no write
 verb appears, which makes the read-only invariant enforceable by the API server
@@ -194,9 +211,18 @@ writing.
 
 ### The image is pinned to a version, never `latest`
 
-`quay.io/hamdi_makni/fluxexp:0.3.0`, with `imagePullPolicy: IfNotPresent`. A
+`quay.io/hamdi_makni/fluxexp:0.4.0`, with `imagePullPolicy: IfNotPresent`. A
 manifest pointing at `latest` describes a different workload on every pull, and
 the CI change moves `latest` on every release. Bumping the tag is the deployment.
+
+**The version is the one this change releases, not the newest that exists.** The
+first attempt pinned `0.3.0`, which was measured deploying the exact bug this
+change fixes: the portal came up answering `{"contexts":[]}`, because the
+in-cluster context listing is code this change adds and `0.3.0` predates it. So
+the manifest references `0.4.0`, and the task verifying the context selector moves
+after the release rather than before it. The cost is a window between this commit
+and the `v0.4.0` tag where applying the base gives ImagePullBackOff — preferable
+to a manifest that ships the defect.
 
 ### The in-cluster context: a sentinel name, mapped in one place
 
