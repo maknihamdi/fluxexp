@@ -92,6 +92,17 @@ fluxexp --version
 ```
 
 ```bash
+# Install the current release: detects the platform, verifies the checksum,
+# installs to /usr/local/bin.
+curl -fsSL https://raw.githubusercontent.com/maknihamdi/fluxexp/main/install.sh | sh
+
+# Pinned and user-local — the form for CI: reproducible, no sudo, and no call to
+# the release API (unauthenticated, 60 requests an hour per address).
+curl -fsSL https://raw.githubusercontent.com/maknihamdi/fluxexp/main/install.sh \
+  | FLUXEXP_VERSION=0.4.0 FLUXEXP_BIN_DIR="$HOME/.local/bin" sh
+```
+
+```bash
 # The release's assets, without opening a browser.
 gh release view v0.3.0 --json assets --jq '.assets[].name'
 
@@ -99,10 +110,11 @@ gh release view v0.3.0 --json assets --jq '.assets[].name'
 gh release download v0.3.0
 gh release download v0.3.0 --pattern 'fluxexp_*_linux_amd64.tar.gz'
 
-# Verify. SHA256SUMS covers every archive, so check the line for the one you
-# have rather than the whole file, which would fail on the four you did not
-# download. macOS: shasum -a 256 -c -
-grep 'fluxexp_0.3.0_linux_amd64' SHA256SUMS | sha256sum -c -
+# Verify, on either platform: macOS has no sha256sum, it has shasum -a 256.
+# SHA256SUMS covers every asset, so check the line for the file you have rather
+# than the whole file, which would fail on everything you did not download.
+sum=$(command -v sha256sum || echo 'shasum -a 256')
+grep 'fluxexp_0.3.0_linux_amd64' SHA256SUMS | $sum -c -
 ```
 
 ```bash

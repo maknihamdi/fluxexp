@@ -197,6 +197,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Before the download: checkout cleans the workspace, so it would remove
+      # `dist/`. Only the installer is needed here, hence the sparse checkout.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: install.sh
+          sparse-checkout-cone-mode: false
+
       # One job creates the release, after all five builds. Publishing from
       # inside the matrix would have five jobs racing to create the same release,
       # and one missing two of its five assets looks complete.
@@ -214,7 +221,11 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
-          sha256sum fluxexp_* > SHA256SUMS
+          # The installer ships with the release too, so the script that verifies
+          # a download is itself verifiable. The `fluxexp_*` glob does not catch
+          # it, so it is named — one list, one sum, no way for them to disagree.
+          cp ../install.sh .
+          sha256sum fluxexp_* install.sh > SHA256SUMS
           cat SHA256SUMS
 
       - uses: softprops/action-gh-release@v2
