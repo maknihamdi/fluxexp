@@ -64,6 +64,10 @@ gh workflow view ci.yml           # parses the workflow; fails on a syntax error
 gh run list --workflow ci.yml     # recent runs
 gh run watch                      # follow the run for the current branch
 gh run view --log-failed          # the failing step's log, without the rest
+
+# Lint the workflow properly — `gh workflow view` only parses it. No local
+# install: the image is the whole dependency.
+docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:latest -color
 ```
 
 ```bash

@@ -23,7 +23,7 @@
 - [x] 3.1 Add `install.sh` to the `release` job's `files`, so it lands among the assets and in `SHA256SUMS` with everything else
 - [x] 3.2 Confirm the checksum step still covers only the intended files: it globs `fluxexp_*`, so the script has to be added to the sum explicitly or the glob widened — decide which and make the file list and the sum agree
 - [x] 3.3 Exclude `install.sh` in `.dockerignore`; it has no business in the image build context
-- [ ] 3.4 `actionlint` clean
+- [x] 3.4 `actionlint` clean
 
 ## 4. Rewrite the instructions
 
