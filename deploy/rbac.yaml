@@ -1,0 +1,49 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluxexp-read
+rules:
+  # READ EVERYTHING, CLUSTER-WIDE — INCLUDING EVERY SECRET.
+  #
+  # The breadth is a requirement, not a convenience:
+  #
+  #   * A Kustomization's .status.inventory.entries names whatever it applied,
+  #     including CRDs of operators this build has never seen. Following them is
+  #     the whole premise; an enumerated role turns every unlisted kind into a
+  #     permission error, which reads as "broken" rather than "not permitted".
+  #   * Expanding a HelmRelease means reading its Helm storage Secret
+  #     (sh.helm.release.v1.<name>.v<n>). The built-in `view` role excludes
+  #     Secrets, so under it every HelmRelease is a dead end.
+  #
+  # The consequence, stated here rather than buried: this pod can read every
+  # Secret in the cluster, and the portal is unauthenticated, so anyone who
+  # reaches it reads through this grant.
+  #
+  # It cannot be narrowed by deleting a rule. Authorization is allow-only with no
+  # exclusion syntax: the wildcard already covers Secrets, a second rule naming
+  # them would be redundant, and "every group except the core one" is
+  # inexpressible since the wildcard spans the core group too. `resourceNames`
+  # takes exact names and does not apply to `list`, so "only the Helm storage
+  # Secrets" is not something RBAC can say.
+  #
+  # The one real alternative is to enumerate the resources explicitly, which
+  # trades away traversal of kinds nobody listed in advance.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    # No `watch`: nothing in the code opens one. No write verb anywhere, which
+    # makes the read-only invariant enforceable by the API server rather than
+    # only by code review.
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluxexp-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluxexp-read
+subjects:
+  - kind: ServiceAccount
+    name: fluxexp
+    namespace: fluxexp

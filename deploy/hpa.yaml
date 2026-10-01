@@ -1,0 +1,30 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fluxexp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fluxexp
+  # Paired with the PDB's minAvailable: 1 — below two replicas the budget blocks
+  # every eviction.
+  minReplicas: 2
+  # A bound on aggregate API-server pressure, not a capacity figure. The
+  # client-go limiter that makes a single layer fast (50 QPS / 100 burst) is
+  # per process, so six replicas can put 300 QPS on one API server.
+  maxReplicas: 6
+  metrics:
+    # CPU is a compromise, named as one. A portal request mostly waits on the API
+    # server — the measured 25s -> ~1.2s came from raising the rate limiter, not
+    # from compute — so utilisation stays low exactly when the portal feels slow,
+    # and this will not react to the thing a user complains about. It ships
+    # because it needs no metric adapter and no application metrics, and because
+    # capacity for concurrent users is real even when it does nothing for one
+    # slow layer. The upgrade path is an exported in-flight-requests metric.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

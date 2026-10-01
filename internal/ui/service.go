@@ -57,7 +57,15 @@ func (s *Service) clientFor(contextName string) (cluster, error) {
 	if c, ok := s.clients[contextName]; ok {
 		return c, nil
 	}
-	c, err := s.newClient(contextName)
+	// The in-cluster sentinel is a name for a mode, not a kubeconfig context: an
+	// empty context is what resolves in-cluster, and passing the sentinel through
+	// would fail validation instead. This is the single place the UI turns a
+	// context name into a client, so it is the only place that needs to know.
+	requested := contextName
+	if requested == k8s.InClusterContext {
+		requested = ""
+	}
+	c, err := s.newClient(requested)
 	if err != nil {
 		return nil, err
 	}

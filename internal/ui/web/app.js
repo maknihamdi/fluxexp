@@ -746,7 +746,11 @@ async function loadContexts() {
   for (const c of contexts) {
     const o = document.createElement("option");
     o.value = c.name;
-    o.textContent = c.current ? `${c.name} (current)` : c.name;
+    // In a pod there is no kubeconfig to name contexts from, and the server
+    // reports a single sentinel. Label it with the cluster it points at, so the
+    // bar reads as the cluster rather than as a magic word.
+    const label = c.name === "in-cluster" && c.cluster ? c.cluster : c.name;
+    o.textContent = c.current ? `${label} (current)` : label;
     sel.appendChild(o);
   }
   // state.context may already be set from the URL; otherwise fall back to the

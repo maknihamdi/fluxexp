@@ -1,0 +1,16 @@
+
+namespace: fluxexp
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: fluxexp
+    includeSelectors: true
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - rbac.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
+  - hpa.yaml

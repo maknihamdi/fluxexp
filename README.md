@@ -111,6 +111,46 @@ then leaves:
 The web UI groups the same information into one card: the node with its
 dependencies nested inside it, and what it applies listed below.
 
+## Run it in the cluster
+
+`deploy/` is a kustomize base that runs the portal inside the cluster it
+inspects. The pod's ServiceAccount becomes the credential, so there is no
+kubeconfig to distribute.
+
+```bash
+kubectl apply -k deploy/
+kubectl -n fluxexp port-forward svc/fluxexp 8765:8765
+# then open http://127.0.0.1:8765
+```
+
+The context selector will show the one cluster the pod runs in.
+
+**Read this before applying it anywhere shared.** The pod is granted `get` and
+`list` on **every resource in every API group, Secrets included** — and the
+portal has no authentication. Anyone who can reach it reads the whole cluster
+through that grant.
+
+The breadth is not laziness. The traversal follows a Kustomization's inventory
+into CRDs of operators this build has never seen, which is the entire premise, and
+expanding a HelmRelease means reading its Helm storage Secret. The built-in `view`
+role excludes Secrets, so under it every HelmRelease is a dead end. It also cannot
+be narrowed by deleting a rule: authorization is allow-only, so the wildcard
+already covers Secrets and "everything except Secrets" is inexpressible. The one
+real alternative is to enumerate resources explicitly and accept that an unlisted
+kind becomes a permission error instead of a node.
+
+For that reason the base ships **no Ingress and no LoadBalancer**: access is a
+`port-forward`, which requires the viewer to already hold cluster credentials.
+Exposing it on a hostname is a decision about an authenticating proxy, and a
+NetworkPolicy restricting who may reach the Service is the first thing to add on a
+shared cluster.
+
+The resource requests are a starting point, not a measurement — revise them from
+`kubectl top pod`. The autoscaler targets CPU, which is a compromise: the workload
+waits on the API server rather than on local compute, so utilisation stays low
+exactly when the portal feels slow. `maxReplicas` is a bound on aggregate
+API-server pressure, since the client-go rate limiter is per process.
+
 ## Increment roadmap
 
 - **I1 (done)**: traversal engine + Flux Kustomization resolver
@@ -171,6 +211,13 @@ dependencies nested inside it, and what it applies listed below.
   all, to a GitHub Release. The binary gained `--version`, which reports the
   released version, or the version the Go toolchain recorded for anything built
   otherwise. MIT licensed.
+- **I13 (done)**: run it in the cluster. A kustomize base (`deploy/`) with the
+  ServiceAccount and cluster-wide read the traversal actually needs, a Deployment
+  that declares no replicas because the HPA owns them, a PodDisruptionBudget that
+  is meaningful rather than deadlocking, and a security context that asserts what
+  the image already is. The portal also stopped being laptop-only: with no
+  kubeconfig it now reports the one cluster it runs in, instead of an empty
+  context selector and no explanation.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 
