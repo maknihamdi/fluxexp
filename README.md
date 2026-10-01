@@ -25,37 +25,54 @@ changes.
 
 ## Install
 
-Download the archive for your platform from the
-[latest release](https://github.com/maknihamdi/fluxexp/releases/latest) —
 `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` and `windows/amd64`
 are published for every version.
 
-```bash
-VERSION=0.3.0
-OS=linux        # or darwin
-ARCH=amd64      # or arm64
-
-curl -sSLO "https://github.com/maknihamdi/fluxexp/releases/download/v${VERSION}/fluxexp_${VERSION}_${OS}_${ARCH}.tar.gz"
-curl -sSLO "https://github.com/maknihamdi/fluxexp/releases/download/v${VERSION}/SHA256SUMS"
-
-# Verify before running it: fluxexp reads your kubeconfig and talks to your
-# clusters with your credentials. SHA256SUMS covers all five archives, so check
-# the line for the one you downloaded rather than the whole file.
-grep "fluxexp_${VERSION}_${OS}_${ARCH}" SHA256SUMS | sha256sum -c -
-
-tar xzf "fluxexp_${VERSION}_${OS}_${ARCH}.tar.gz"
-sudo install -m 0755 fluxexp /usr/local/bin/fluxexp
-fluxexp --version
-```
-
-On macOS, `shasum -a 256 -c -` replaces `sha256sum -c -`; the rest is identical.
-On Windows, download the `.zip`, which contains `fluxexp.exe`.
-
-With the Go toolchain instead (reports its own version, no download to verify):
+**With the Go toolchain** — one line, every platform including Windows, no
+platform to pick and no download to verify; it reports the right version through
+build info:
 
 ```bash
 go install github.com/maknihamdi/fluxexp/cmd/fluxexp@latest
 ```
+
+**Without it, on Linux or macOS** — the installer detects your platform, resolves
+the current version, verifies the checksum and installs to `/usr/local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maknihamdi/fluxexp/main/install.sh | sh
+```
+
+That line executes a script fetched from the network. The same thing in three
+steps, if you would rather read it first — it is short:
+
+```bash
+curl -fsSL -O https://raw.githubusercontent.com/maknihamdi/fluxexp/main/install.sh
+less install.sh
+sh install.sh
+```
+
+Two variables, both optional:
+
+- `FLUXEXP_BIN_DIR` — where to install, default `/usr/local/bin`. A directory you
+  own needs no `sudo`: `FLUXEXP_BIN_DIR=~/.local/bin sh install.sh`. Elevation is
+  used only when the destination is not writable, and the script says when it is.
+- `FLUXEXP_VERSION` — install that version instead of the newest. **Pin it in
+  CI**: the install is then reproducible, and it skips the release API, which is
+  rate-limited to 60 requests an hour per address.
+
+The script verifies or refuses: `fluxexp` reads your kubeconfig and talks to your
+clusters with your credentials, so if neither `sha256sum` (Linux) nor `shasum`
+(macOS) is present it stops rather than installing something unchecked. Each
+release also carries `install.sh` as an asset, covered by that release's
+`SHA256SUMS` — an immutable copy of the thing that does the verifying.
+
+**On Windows** there is no installer; this one is POSIX shell. With the Go
+toolchain, use the line above. Without it, download
+`fluxexp_<version>_windows_amd64.zip` from the
+[latest release](https://github.com/maknihamdi/fluxexp/releases/latest) — it
+contains `fluxexp.exe` — verify it against `SHA256SUMS`, and put it on your
+`PATH`.
 
 Or run the container image — see [Container image](#container-image). It is the
 right choice for running the portal *in* a cluster, and the wrong one for a CLI
@@ -218,6 +235,15 @@ API-server pressure, since the client-go rate limiter is per process.
   the image already is. The portal also stopped being laptop-only: with no
   kubeconfig it now reports the one cluster it runs in, instead of an empty
   context selector and no explanation.
+- **I14 (done)**: one line to install. `install.sh` detects the platform from
+  `uname` (never from `go env GOARCH`, which reports `amd64` on an Apple Silicon
+  machine whose toolchain is an amd64 build), resolves the current version from
+  the release API so no instruction names a version, verifies the archive with
+  whichever of `sha256sum` or `shasum` exists — and **refuses to install** if
+  neither does — and uses `sudo` only when the destination is not writable. The
+  script ships as a release asset too, covered by that release's `SHA256SUMS`.
+  The README install section no longer asks the reader for the version, the OS or
+  the architecture.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 
