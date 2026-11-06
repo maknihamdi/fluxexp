@@ -45,7 +45,7 @@ type NodeDTO struct {
 	Context string `json:"context"`
 }
 
-// RootDTO is a root Kustomization summary for the home page.
+// RootDTO is a root Flux object summary for the home page.
 type RootDTO struct {
 	Ref            RefDTO     `json:"ref"`
 	Health         string     `json:"health"`

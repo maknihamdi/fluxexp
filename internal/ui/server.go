@@ -18,6 +18,7 @@ var webAssets embed.FS
 func Handler(s *Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/contexts", s.handleContexts)
+	mux.HandleFunc("/api/namespaces", s.handleNamespaces)
 	mux.HandleFunc("/api/roots", s.handleRoots)
 	mux.HandleFunc("/api/expand", s.handleExpand)
 
@@ -38,14 +39,23 @@ func (s *Service) handleContexts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"contexts": ctxs})
 }
 
-func (s *Service) handleRoots(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	roots, err := s.Roots(q.Get("context"), q.Get("namespace"))
+func (s *Service) handleNamespaces(w http.ResponseWriter, r *http.Request) {
+	namespaces, err := s.Namespaces(r.URL.Query().Get("context"))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	writeJSON(w, map[string]interface{}{"roots": roots})
+	writeJSON(w, map[string]interface{}{"namespaces": namespaces})
+}
+
+func (s *Service) handleRoots(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	roots, unreadable, err := s.Roots(q.Get("context"), q.Get("namespace"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"roots": roots, "unreadable": unreadable})
 }
 
 func (s *Service) handleExpand(w http.ResponseWriter, r *http.Request) {

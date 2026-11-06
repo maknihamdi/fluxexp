@@ -165,13 +165,22 @@ splitting out Secrets: authorization is allow-only, so the wildcard already cove
 
 **`internal/render`** — pure functions from `*engine.Node` / rows to text (tree, list). No I/O.
 
-**`internal/ui`** — `Service` + `Handler` serving `/api/contexts`, `/api/roots`, `/api/expand`
-and an `//go:embed web/*` single-page app. It resolves through `Registry.ResolveFunc` and
+**`internal/ui`** — `Service` + `Handler` serving `/api/contexts`, `/api/namespaces`, `/api/roots`,
+`/api/expand` and an `//go:embed web/*` single-page app. It resolves through `Registry.ResolveFunc` and
 expands **one hop per call**: each listed entry gets a single fetch (health, fields, and its
 dependency refs), never a full resolve. It caches one client per kube context, wraps each
 request in a `memoGetter` (one layer asks for the same shared source many times; the memo lives
 for **one request only**, because caching across requests would serve stale health), and
 resolves a layer's entries concurrently through a bounded pool (`layerConcurrency`).
+
+`Roots` lists Kustomizations and HelmReleases of one namespace. A kind absent from the cluster
+is skipped (Flux runs without helm-controller); a kind refused while another reads is named in
+`unreadable`, because half a namespace must not read as a whole one; every present kind refused
+is an error, because a refusal must not read as an empty namespace. `Namespaces` is one list of
+`v1 Namespace`, and is **deliberately unfiltered**: RBAC authorizes a `list` as a whole, so a
+name there promises nothing, and telling readable namespaces apart would take a call per
+namespace. Suggestions are a hint; `/api/roots` is the only thing that decides what the home
+shows, which is also why a typed namespace needs no validation of its own.
 
 The frontend is a **tree pane plus a node pane**. The tree holds every branch the user
 has expanded (`tree.nodes`: refKey → `{node, at}`); the node pane shows the selected
@@ -182,7 +191,8 @@ selection is a navigation, so expanding adds no history entry.
 The URL stays **the source of truth for where the user is**: `state.trail` is a
 projection of `?p=<hop>~<hop>…` (a hop is `type:ns:name`, or `domain:type:ns:name` off
 the `kubernetes` default) and holds the path to the **selected** node — open branches
-are deliberately not in the address. Every navigation pushes a history entry and
+are deliberately not in the address. `namespace=` sits beside it, omitted at the `flux`
+default, and scopes the root level only: hops name their own. Every navigation pushes a history entry and
 `popstate` re-reads the URL, so a shared link and a Back press render identically. A
 trail is restored without resolving its intermediate hops: they are drawn as a *spine*
 in the tree from their own identifiers (labels derived from the type, mirroring
@@ -197,6 +207,14 @@ back still re-resolves, the same reason the server memo lives for one request on
 The tree walk carries a `seen` set of the keys on the current path: the Flux bootstrap
 Kustomization applies itself, and a repeat is rendered as a leaf pointer (`↩`) instead
 of being descended into — the same guard the engine's `visited` map provides.
+
+Each namespace's roots are held in `tree.listings` once read, so returning to one costs no
+call; it shows its age and only its re-read control refreshes it. Only successful reads are
+held, so a refused namespace is retried on selection. Changing namespace discards the open
+branches; changing context discards the listings too. `loadRoots` **never throws**: a failure
+is `tree.rootsError`, rendered by both panes, and `tree.roots = []` is what lets a deep link's
+spine render when its namespace is refused. It also drops an answer that arrives after the
+context or namespace changed, which `detail.seq` does not cover.
 
 The name and health filters narrow the tree and the open layer over material already
 fetched — never a call — and a branch is kept when anything under it matches, so

@@ -6,10 +6,12 @@
 // in the tree is not a navigation and never touches the URL.
 const state = {
   context: "",
+  namespace: "flux",
   trail: [], // array of ref DTOs (path to the selected node); empty => roots level
 };
 
 const DOMAIN_K8S = "kubernetes";
+const DEFAULT_NS = "flux";
 const HEALTHS = ["healthy", "pending", "unhealthy", "unknown", "error"];
 
 // tree holds what has been fetched: one entry per expanded reference, each
@@ -18,6 +20,9 @@ const HEALTHS = ["healthy", "pending", "unhealthy", "unknown", "error"];
 const tree = {
   roots: null,          // RootDTO[] for the roots level
   rootsAt: 0,
+  rootsError: "",       // why the roots level could not be read
+  unreadable: [],       // kinds refused while others could be read
+  listings: new Map(),  // namespace -> { roots, unreadable, at }: successful reads only
   nodes: new Map(),     // refKey -> { node: NodeDTO, at: ms }
   open: new Set(),      // refKeys whose children are revealed
   loading: new Set(),   // refKeys being fetched
@@ -112,9 +117,10 @@ const decodeTrail = (p) => (p ? p.split("~").map(decodeHop) : []);
 
 // urlFor builds an address by hand: URLSearchParams' form-urlencoded serializer
 // would escape "~" and ":" into %7E and %3A and lose the trail's readability.
-function urlFor(contextName, trail) {
+function urlFor(contextName, namespace, trail) {
   const parts = [];
   if (contextName) parts.push(`context=${encodeURIComponent(contextName)}`);
+  if (namespace && namespace !== DEFAULT_NS) parts.push(`namespace=${encodeURIComponent(namespace)}`);
   const p = encodeTrail(trail || []);
   if (p) parts.push(`p=${p}`);
   return parts.length ? `/?${parts.join("&")}` : "/";
@@ -308,18 +314,52 @@ async function loadBranch(ref) {
   }
 }
 
+// loadRoots never throws: a failure is state the panes render, because the user
+// must be able to read it and act on it, and a toast outlives neither.
 async function loadRoots() {
-  const { roots } = await api(`/api/roots?context=${encodeURIComponent(state.context)}`);
-  tree.roots = roots;
-  tree.rootsAt = Date.now();
+  const { context, namespace } = state;
+  let listing = null;
+  let error = "";
+  try {
+    const { roots, unreadable } = await api(
+      `/api/roots?context=${encodeURIComponent(context)}&namespace=${encodeURIComponent(namespace)}`);
+    listing = { roots, unreadable: unreadable || [], at: Date.now() };
+  } catch (e) {
+    error = e.message;
+  }
+  // The user moved on while this was in flight; it must not paint over their choice.
+  if (context !== state.context || namespace !== state.namespace) return;
+  if (listing) tree.listings.set(namespace, listing);
+  else tree.listings.delete(namespace);
+  showListing(listing || { roots: [], unreadable: [], at: 0 });
+  tree.rootsError = error;
 }
 
-function resetTree() {
-  tree.roots = null;
-  tree.rootsAt = 0;
+function showListing(listing) {
+  tree.roots = listing ? listing.roots : null;
+  tree.rootsAt = listing ? listing.at : 0;
+  tree.unreadable = listing ? listing.unreadable : [];
+  tree.rootsError = "";
+}
+
+function clearBranches() {
   tree.nodes.clear();
   tree.open.clear();
   tree.loading.clear();
+}
+
+function resetTree() {
+  tree.listings.clear();
+  showListing(null);
+  clearBranches();
+}
+
+// switchNamespace restores the namespace's held listing when there is one; a null
+// tree.roots is what makes the next render read it.
+function switchNamespace(namespace) {
+  state.namespace = namespace;
+  clearBranches();
+  showListing(tree.listings.get(namespace));
 }
 
 // ---- tree pane ------------------------------------------------------------
@@ -329,11 +369,9 @@ function renderTree() {
   t.innerHTML = "";
 
   const head = elm("div", "tgroup-label");
-  head.appendChild(document.createTextNode("root kustomizations · ns flux"));
-  if (tree.rootsAt) {
-    head.appendChild(ageEl(tree.rootsAt));
-    head.appendChild(rereadButton("Re-read the root Kustomizations", refreshRoots));
-  }
+  head.appendChild(document.createTextNode(`roots · ns ${state.namespace}`));
+  if (tree.rootsAt) head.appendChild(ageEl(tree.rootsAt));
+  if (tree.roots !== null) head.appendChild(rereadButton("Re-read the roots", refreshRoots));
   t.appendChild(head);
 
   if (tree.roots === null) {
@@ -342,7 +380,8 @@ function renderTree() {
   }
   const roots = filtered(tree.roots);
   if (!roots.length) {
-    t.appendChild(elm("div", "tloading", tree.roots.length ? "nothing matches the filter" : "no root Kustomizations"));
+    t.appendChild(elm("div", "tloading", tree.roots.length ? "nothing matches the filter"
+      : tree.rootsError ? `cannot read namespace '${state.namespace}'` : "no Flux resources"));
   }
   for (const r of roots) t.appendChild(treeBranch(r, [r.ref], 0, new Set()));
 
@@ -443,11 +482,7 @@ async function toggleBranch(ref) {
 }
 
 async function refreshRoots() {
-  try {
-    await loadRoots();
-  } catch (e) {
-    toast(e.message);
-  }
+  await loadRoots();
   renderTree();
   if (state.trail.length === 0) renderDetailBody();
 }
@@ -469,15 +504,8 @@ async function renderDetail() {
     detail.node = null;
     if (tree.roots === null) {
       v.innerHTML = "";
-      v.appendChild(elm("div", "spinner", "Loading root Kustomizations…"));
-      try {
-        await loadRoots();
-      } catch (e) {
-        if (seq !== detail.seq) return;
-        v.innerHTML = "";
-        toast(e.message);
-        return;
-      }
+      v.appendChild(elm("div", "spinner", "Loading roots…"));
+      await loadRoots();
       if (seq !== detail.seq) return;
       renderTree();
     }
@@ -490,7 +518,7 @@ async function renderDetail() {
   v.appendChild(elm("div", "spinner", `Resolving ${refLabel(ref)}…`));
   // The roots level backs the tree; fetch it once so the path is visible even on
   // a deep link, without blocking the node itself.
-  if (tree.roots === null) loadRoots().then(renderTree).catch(() => {});
+  if (tree.roots === null) loadRoots().then(renderTree);
 
   let node;
   try {
@@ -618,23 +646,33 @@ function renderRootsLevel() {
 
   const lh = elm("div", "layer-h");
   lh.appendChild(elm("h2", null,
-    `root kustomizations · ${shown.length === roots.length ? roots.length : `${shown.length} of ${roots.length}`}`));
+    `roots · ${shown.length === roots.length ? roots.length : `${shown.length} of ${roots.length}`}`));
   const { tally, bar } = layerSummary(roots);
   lh.appendChild(tally);
   const read = elm("span", "read");
-  read.appendChild(document.createTextNode("read "));
-  read.appendChild(ageEl(tree.rootsAt));
-  read.appendChild(rereadButton("Re-read the root Kustomizations", refreshRoots));
+  if (tree.rootsAt) {
+    read.appendChild(document.createTextNode("read "));
+    read.appendChild(ageEl(tree.rootsAt));
+  }
+  read.appendChild(rereadButton("Re-read the roots", refreshRoots));
   lh.appendChild(read);
   v.appendChild(lh);
   if (roots.length) v.appendChild(bar);
 
+  if (tree.rootsError) {
+    v.appendChild(elm("div", "notice", `Cannot read namespace '${state.namespace}': ${tree.rootsError}`));
+    return;
+  }
+  if (tree.unreadable.length) {
+    v.appendChild(elm("div", "notice",
+      `Not readable in namespace '${state.namespace}', so not listed: ${tree.unreadable.join(", ")}.`));
+  }
   if (!roots.length) {
-    v.appendChild(elm("div", "empty", "No root Kustomizations in namespace 'flux' for this context."));
+    v.appendChild(elm("div", "empty", `No Flux resources in namespace '${state.namespace}' for this context.`));
     return;
   }
   if (!shown.length) {
-    v.appendChild(elm("div", "empty", "No root Kustomization matches the filter."));
+    v.appendChild(elm("div", "empty", "No root matches the filter."));
     return;
   }
 
@@ -650,7 +688,7 @@ function rootRow(r) {
   const row = elm("div", "row container");
   row.appendChild(mark(r.health));
   row.appendChild(elm("span", "rchev", "▶"));
-  row.appendChild(elm("span", "rkind", "Kustomization"));
+  row.appendChild(elm("span", "rkind", kindOf(r.ref)));
   row.appendChild(elm("span", "rname", nameOf(r.ref)));
 
   // Freshness has a cell of its own, so it survives the narrow layout where the
@@ -670,7 +708,7 @@ function rootRow(r) {
   return clickable(row, () => navigateTo([r.ref]));
 }
 
-// rootExtras reads a root Kustomization's path, interval and Ready message from
+// rootExtras reads a root's path, interval and Ready message from
 // the roots listing already in hand. They live in its spec, not in its status,
 // and /api/expand does not carry them — reading them here costs no extra call.
 function rootExtras(ref) {
@@ -762,14 +800,58 @@ async function loadContexts() {
     // A trail is a path through one cluster: carrying it into another context
     // would address objects that may not exist there.
     state.context = sel.value;
+    state.namespace = DEFAULT_NS;
     resetTree();
+    loadNamespaces();
     navigateTo([]);
   };
 }
 
+// loadNamespaces fills the suggestions. Nothing waits on it, and a failure just
+// leaves none: a namespace can always be typed.
+async function loadNamespaces() {
+  const context = state.context;
+  const list = el("#namespaces");
+  list.replaceChildren();
+  let namespaces;
+  try {
+    ({ namespaces } = await api(`/api/namespaces?context=${encodeURIComponent(context)}`));
+  } catch {
+    return;
+  }
+  if (context !== state.context) return;
+  list.replaceChildren(...namespaces.map((name) => {
+    const o = document.createElement("option");
+    o.value = name;
+    return o;
+  }));
+}
+
 function syncContextBar() {
   el("#context").value = state.context;
+  el("#namespace").value = state.namespace;
 }
+
+// A datalist only offers what matches the field, so "flux" sitting in it would
+// hide every other suggestion: while focused, the value moves to the placeholder.
+const nsInput = el("#namespace");
+nsInput.onfocus = () => {
+  nsInput.placeholder = state.namespace;
+  nsInput.value = "";
+};
+nsInput.onblur = () => {
+  if (!nsInput.value.trim()) syncContextBar();
+};
+nsInput.onchange = () => {
+  const namespace = nsInput.value.trim();
+  if (!namespace || namespace === state.namespace) {
+    syncContextBar();
+    return;
+  }
+  nsInput.blur();
+  switchNamespace(namespace);
+  navigateTo([]);
+};
 
 // ---- navigation -----------------------------------------------------------
 
@@ -779,7 +861,7 @@ function syncContextBar() {
 function navigateTo(trail) {
   state.trail = trail;
   syncContextBar();
-  history.pushState(null, "", urlFor(state.context, state.trail));
+  history.pushState(null, "", urlFor(state.context, state.namespace, state.trail));
   closeDrawer();
   render();
 }
@@ -796,7 +878,7 @@ function goUp() {
 }
 
 function newExploration(ref) {
-  window.open(urlFor(state.context, [ref]), "_blank");
+  window.open(urlFor(state.context, state.namespace, [ref]), "_blank");
 }
 
 // readURL projects the URL onto state — the single decoder used by boot and by
@@ -806,6 +888,8 @@ function readURL() {
   const ctx = rawParam("context");
   if (ctx) state.context = decodeURIComponent(ctx);
   try {
+    const ns = rawParam("namespace");
+    state.namespace = ns ? decodeURIComponent(ns) : DEFAULT_NS;
     state.trail = decodeTrail(rawParam("p"));
     return "";
   } catch (e) {
@@ -835,8 +919,15 @@ el("#q").oninput = (e) => {
 // ---- boot -----------------------------------------------------------------
 
 window.addEventListener("popstate", () => {
+  const { context, namespace } = state;
   const err = readURL();
   if (err) toast(`Cannot read that path: ${err}`);
+  if (state.context !== context) {
+    resetTree();
+    loadNamespaces();
+  } else if (state.namespace !== namespace) {
+    switchNamespace(state.namespace);
+  }
   syncContextBar();
   render();
 });
@@ -851,9 +942,10 @@ window.addEventListener("popstate", () => {
     toast(`Cannot list contexts: ${e.message}`);
     return;
   }
+  loadNamespaces();
   if (err) toast(`Cannot read that path: ${err}`);
   // Normalize the address of the entry the user landed on, without adding a
   // history entry of its own.
-  history.replaceState(null, "", urlFor(state.context, state.trail));
+  history.replaceState(null, "", urlFor(state.context, state.namespace, state.trail));
   render();
 })();

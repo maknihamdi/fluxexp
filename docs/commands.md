@@ -22,6 +22,15 @@ that downloads the right toolchain on first use, which needs network access and 
 writable module cache — worth knowing when a shell has neither and `go` reports
 `go.mod requires go >= 1.26.0`.
 
+## Portal without a cluster
+
+```bash
+# Serve the real frontend against a fake /api, to drive the UI in a browser: `flux`
+# is refused, team-a, team-b, partial and empty cover the other home states. Every
+# API call goes to stdout, which is how "no call" is observed for a held listing.
+python3 scripts/fake-portal.py 8799     # http://127.0.0.1:8799
+```
+
 ## Container image
 
 ```bash

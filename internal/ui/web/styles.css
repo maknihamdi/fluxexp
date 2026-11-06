@@ -57,6 +57,7 @@ button, input, select { font: inherit; color: inherit; }
 .brand i { font-style: normal; color: var(--accent); }
 .rail .sep { width: 1px; height: 20px; background: var(--line); }
 .ctx { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+.ctx input { width: 11rem; min-width: 7rem; }
 .lbl { font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-faint); }
 select, .field {
   background: var(--pane-2); border: 1px solid var(--line); border-radius: 4px;
