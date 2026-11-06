@@ -27,12 +27,9 @@ spec:
               app.kubernetes.io/name: fluxexp
       containers:
         - name: fluxexp
-          # 0.4.0 is the first release carrying the in-cluster context listing
-          # this change adds. Pinning 0.3.0 would deploy the very bug the change
-          # fixes: the portal would come up with an empty context selector.
-          # Consequence to know: between this commit and the v0.4.0 tag, applying
-          # the base gives ImagePullBackOff.
-          image: quay.io/hamdi_makni/fluxexp:0.4.0
+          # Never below 0.4.0, the first release listing the in-cluster context:
+          # under it the portal comes up with an empty context selector.
+          image: quay.io/hamdi_makni/fluxexp:0.5.0
           imagePullPolicy: IfNotPresent
           # The binary binds loopback by default and that default does not
           # change: being reachable inside the cluster is something this manifest
