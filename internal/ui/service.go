@@ -6,14 +6,23 @@ package ui
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/maknihamdi/fluxexp/internal/engine"
 	"github.com/maknihamdi/fluxexp/internal/k8s"
 	"github.com/maknihamdi/fluxexp/internal/resolver"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+// rootKinds are the Flux kinds listed at the root level, in display order.
+var rootKinds = []struct{ apiVersion, kind string }{
+	{"kustomize.toolkit.fluxcd.io/v1", "Kustomization"},
+	{"helm.toolkit.fluxcd.io/v2", "HelmRelease"},
+}
 
 // cluster is the read-only cluster access the service needs. *k8s.Client
 // satisfies it; tests provide a fake. K8sGetter already covers Get/List/Namespaced.
@@ -73,27 +82,71 @@ func (s *Service) clientFor(contextName string) (cluster, error) {
 	return c, nil
 }
 
-// Roots lists the root Flux Kustomizations for a context. An empty namespace
-// defaults to "flux".
-func (s *Service) Roots(contextName, namespace string) ([]RootDTO, error) {
+// Roots lists the root Flux objects of a namespace for a context, and names the
+// kinds it was refused while others could be read. An empty namespace defaults
+// to "flux". A kind absent from the cluster is skipped: Flux runs fine without
+// helm-controller. Refused on every kind present, it returns the refusal, so the
+// caller cannot mistake it for an empty namespace.
+func (s *Service) Roots(contextName, namespace string) ([]RootDTO, []string, error) {
 	if namespace == "" {
 		namespace = "flux"
 	}
 	c, err := s.clientFor(contextName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	objs, err := c.List(context.Background(), "kustomize.toolkit.fluxcd.io/v1", "Kustomization", namespace)
+	roots := []RootDTO{}
+	var unreadable []string
+	var refusal error
+	readable := false
+	srcCache := map[string]*unstructured.Unstructured{}
+	for _, k := range rootKinds {
+		objs, err := c.List(context.Background(), k.apiVersion, k.kind, namespace)
+		switch {
+		case meta.IsNoMatchError(err):
+			continue
+		case apierrors.IsForbidden(err):
+			unreadable = append(unreadable, k.kind)
+			if refusal == nil {
+				refusal = err
+			}
+			continue
+		case err != nil:
+			return nil, nil, err
+		}
+		readable = true
+		for i := range objs {
+			obj := &objs[i]
+			roots = append(roots, rootSummary(k.apiVersion, k.kind, obj, s.sourceFor(c, obj, srcCache)))
+		}
+	}
+	if refusal != nil && !readable {
+		return nil, nil, refusal
+	}
+	return roots, unreadable, nil
+}
+
+// Namespaces lists the cluster's namespaces, as suggestions: a list is authorized
+// as a whole and not filtered by rights, so a name here promises nothing about
+// what can be read in it. A refused list yields no suggestions, not an error.
+func (s *Service) Namespaces(contextName string) ([]string, error) {
+	c, err := s.clientFor(contextName)
 	if err != nil {
 		return nil, err
 	}
-	roots := make([]RootDTO, 0, len(objs))
-	srcCache := map[string]*unstructured.Unstructured{}
-	for i := range objs {
-		ks := &objs[i]
-		roots = append(roots, rootSummary(ks, s.sourceFor(c, ks, srcCache)))
+	objs, err := c.List(context.Background(), "v1", "Namespace", "")
+	if apierrors.IsForbidden(err) {
+		return []string{}, nil
 	}
-	return roots, nil
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(objs))
+	for i := range objs {
+		names = append(names, objs[i].GetName())
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // sourceFor fetches a Kustomization's source object, caching by identity so a
@@ -278,18 +331,20 @@ func (s *Service) fetchedNode(rc *resolver.ResolveContext, ref engine.Ref, conte
 
 // rootSummary extracts the home-page summary from a Kustomization object and its
 // source (may be nil), including reconciliation freshness.
-func rootSummary(obj, source *unstructured.Unstructured) RootDTO {
+func rootSummary(apiVersion, kind string, obj, source *unstructured.Unstructured) RootDTO {
 	ns := obj.GetNamespace()
 	name := obj.GetName()
-	ref := resolver.K8sRef("kustomize.toolkit.fluxcd.io/v1", "Kustomization", ns, name)
+	ref := resolver.K8sRef(apiVersion, kind, ns, name)
 
 	h, _ := resolver.K8sHealth(obj)
-	freshness, fields := resolver.KustomizationFreshness(obj, source)
 	dto := RootDTO{
-		Ref:       refToDTO(ref),
-		Health:    string(h),
-		Freshness: string(freshness),
-		Fields:    fieldsToDTO(fields),
+		Ref:    refToDTO(ref),
+		Health: string(h),
+	}
+	if kind == "Kustomization" {
+		freshness, fields := resolver.KustomizationFreshness(obj, source)
+		dto.Freshness = string(freshness)
+		dto.Fields = fieldsToDTO(fields)
 	}
 
 	dto.SourceKind, _, _ = unstructured.NestedString(obj.Object, "spec", "sourceRef", "kind")

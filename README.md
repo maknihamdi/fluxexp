@@ -93,8 +93,9 @@ fluxexp list --kind Kustomization              # all namespaces
 fluxexp list --kind HelmRelease --unhealthy    # only the ones with problems
 fluxexp list --kind GitRepository -n team-a    # a single namespace
 
-# Open the local exploration portal (web UI) — pick a context, list root
-# Kustomizations, drill layer by layer. No auth; loopback only.
+# Open the local exploration portal (web UI) — pick a context and a namespace
+# (`flux` by default), list its Kustomizations and HelmReleases, drill layer by
+# layer. No auth; loopback only.
 fluxexp ui                       # http://127.0.0.1:8765
 fluxexp ui --address 127.0.0.1:9000
 
@@ -244,6 +245,11 @@ API-server pressure, since the client-go rate limiter is per process.
   script ships as a release asset too, covered by that release's `SHA256SUMS`.
   The README install section no longer asks the reader for the version, the OS or
   the architecture.
+- **I15 (done)**: a namespace selector. Someone with no rights on `flux` was stuck
+  on the home; the rail now takes any namespace, suggested from a single list of
+  the cluster's namespaces when the credentials allow it, typed otherwise. The
+  roots home lists HelmReleases as well as Kustomizations, states a namespace it
+  cannot read, and holds each namespace's listing until it is re-read.
 - Next: generalize owner-descent to operator CRDs; cloud verification (e.g. GCP
   via a `gcp`-domain resolver, using `gcloud`).
 
